@@ -4,9 +4,18 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
+const QUESTIONS = [
+  'Did someone get the package?',
+  'Is anyone home?',
+  'Did someone feed the dog?',
+  'Is laundry running?',
+  'Did someone start dinner?',
+]
+
 export default function Home() {
   const router = useRouter()
   const [ready, setReady] = useState(false)
+  const [question] = useState(() => QUESTIONS[Math.floor(Math.random() * QUESTIONS.length)])
 
   useEffect(() => {
     const spaceId = localStorage.getItem('dw_space_id')
@@ -31,14 +40,19 @@ export default function Home() {
       style={{ background: 'var(--bg)' }}
     >
       <div className="w-full max-w-[420px] space-y-10">
-        <div className="text-center space-y-3">
-          <div className="text-5xl">🏠</div>
-          <h1 className="text-2xl font-semibold tracking-tight" style={{ color: 'var(--text)' }}>
-            Dwellness
-          </h1>
-          <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            A calm status board for shared spaces.
+        <div className="text-center space-y-4">
+          <p className="text-base font-medium tracking-tight" style={{ color: 'var(--text)' }}>
+            {question}
           </p>
+          <div>
+            <div className="text-4xl mb-2">🏠</div>
+            <h1 className="text-xl font-semibold tracking-tight" style={{ color: 'var(--text)' }}>
+              Dwellness
+            </h1>
+            <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
+              A calm status board for shared spaces.
+            </p>
+          </div>
         </div>
 
         <div className="space-y-3">

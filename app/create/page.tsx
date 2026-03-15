@@ -29,11 +29,25 @@ export default function CreateSpace() {
 
       const { data: member, error: memberError } = await supabase
         .from('members')
-        .insert({ space_id: space.id, display_name: memberName.trim() })
+        .insert({ space_id: space.id, display_name: memberName.trim(), presence_state: 'home' })
         .select()
         .single()
 
       if (memberError) throw memberError
+
+      // Seed with staggered demo events so the board feels alive on first open
+      const now = Date.now()
+      const min = (n: number) => new Date(now - n * 60_000).toISOString()
+      const days = (n: number) => new Date(now - n * 24 * 60 * 60_000).toISOString()
+      await supabase.from('events').insert([
+        { space_id: space.id, member_id: member.id, emoji: '🔥', label: 'Firepit',            created_at: min(20)  },
+        { space_id: space.id, member_id: member.id, emoji: '🍝', label: 'Dinner launch',       created_at: min(80)  },
+        { space_id: space.id, member_id: member.id, emoji: '🧺', label: 'Laundry running',     created_at: min(150) },
+        { space_id: space.id, member_id: member.id, emoji: '📦', label: 'Amazon retrieved',    created_at: min(255) },
+        { space_id: space.id, member_id: member.id, emoji: '🐶', label: 'Dog fed',             created_at: min(315) },
+        { space_id: space.id, member_id: member.id, emoji: '🐈', label: 'Cat spotted',         created_at: min(370) },
+        { space_id: space.id, member_id: member.id, emoji: '🔧', label: 'HVAC serviced',       created_at: days(3)  },
+      ])
 
       localStorage.setItem('dw_space_id', space.id)
       localStorage.setItem('dw_member_id', member.id)

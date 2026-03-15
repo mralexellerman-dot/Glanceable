@@ -24,10 +24,14 @@ create table events (
   id uuid primary key default gen_random_uuid(),
   space_id uuid not null references spaces(id) on delete cascade,
   member_id uuid references members(id) on delete set null,
-  emoji text not null default '📌',
+  emoji text not null default '·',
   label text not null,
+  note text,
   created_at timestamptz not null default now()
 );
+
+-- Migration for existing installs:
+-- alter table events add column if not exists note text;
 
 -- Reactions
 create table reactions (

@@ -3,7 +3,15 @@
 import { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import type { Space } from '@/lib/types'
+import type { Space, Event } from '@/lib/types'
+
+function relativeTime(dateStr: string): string {
+  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
+  if (diff < 60) return `${diff}s`
+  if (diff < 3600) return `${Math.floor(diff / 60)}m`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`
+  return `${Math.floor(diff / 86400)}d`
+}
 
 export default function JoinPage() {
   const router = useRouter()
@@ -11,6 +19,7 @@ export default function JoinPage() {
   const code = (params.code as string).toUpperCase()
 
   const [space, setSpace] = useState<Space | null>(null)
+  const [recentEvents, setRecentEvents] = useState<Event[]>([])
   const [memberName, setMemberName] = useState('')
   const [loading, setLoading] = useState(true)
   const [joining, setJoining] = useState(false)
@@ -18,7 +27,6 @@ export default function JoinPage() {
   const [notFound, setNotFound] = useState(false)
 
   useEffect(() => {
-    // If already a member of this or another space, still allow joining
     async function load() {
       const { data } = await supabase
         .from('spaces')
@@ -28,6 +36,13 @@ export default function JoinPage() {
 
       if (data) {
         setSpace(data)
+        const { data: events } = await supabase
+          .from('events')
+          .select('*')
+          .eq('space_id', data.id)
+          .order('created_at', { ascending: false })
+          .limit(3)
+        setRecentEvents(events ?? [])
       } else {
         setNotFound(true)
       }
@@ -44,7 +59,7 @@ export default function JoinPage() {
     try {
       const { data: member, error: err } = await supabase
         .from('members')
-        .insert({ space_id: space.id, display_name: memberName.trim() })
+        .insert({ space_id: space.id, display_name: memberName.trim(), presence_state: 'home' })
         .select()
         .single()
 
@@ -86,15 +101,35 @@ export default function JoinPage() {
       style={{ background: 'var(--bg)' }}
     >
       <div className="w-full max-w-[420px] space-y-6">
-        <div>
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-            You've been invited to
-          </p>
-          <h1 className="text-2xl font-semibold mt-1" style={{ color: 'var(--text)' }}>
-            🏠 {space.name}
+        {/* Living place card */}
+        <div
+          className="rounded-2xl px-5 py-4 space-y-3"
+          style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+        >
+          <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>
+            Join {space.name} on Dwellness
           </h1>
+
+          {recentEvents.length > 0 && (
+            <div className="space-y-2">
+              {recentEvents.map(e => (
+                <div key={e.id} className="flex items-center gap-2 text-sm">
+                  <span>{e.emoji}</span>
+                  <span style={{ color: 'var(--text-secondary)' }}>{e.label}</span>
+                  <span className="ml-auto tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                    {relativeTime(e.created_at)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+            See what's happening here.
+          </p>
         </div>
 
+        {/* Join form */}
         <div className="space-y-3">
           <label className="block text-sm" style={{ color: 'var(--text-secondary)' }}>
             What's your name?
@@ -120,7 +155,7 @@ export default function JoinPage() {
             className="w-full py-3.5 rounded-xl text-sm font-medium text-white transition-opacity disabled:opacity-40 active:opacity-80"
             style={{ background: '#1A1A18' }}
           >
-            {joining ? 'Joining…' : 'Join space'}
+            {joining ? 'Joining…' : `Join ${space.name}`}
           </button>
         </div>
       </div>

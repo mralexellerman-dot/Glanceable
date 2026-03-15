@@ -30,6 +30,7 @@ export interface Event {
   member_id: string | null
   emoji: string
   label: string
+  note?: string | null
   created_at: string
   member?: Pick<Member, 'id' | 'display_name'>
   reactions?: Reaction[]
