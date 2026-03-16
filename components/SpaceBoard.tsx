@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import type { Space, Member, Event, Reaction } from '@/lib/types'
+import { getUserMemberships } from '@/lib/memberships'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -24,9 +25,9 @@ const PRESENCE_NEXT: Record<string, string> = {
 // Quick signals shown at top of Add Event sheet — one-tap log
 const SHEET_QUICK = [
   { emoji: '🐶', label: 'Dog fed' },
-  { emoji: '📦', label: 'Package inside' },
+  { emoji: '📦', label: 'Amazon retrieved' },
   { emoji: '🧺', label: 'Laundry running' },
-  { emoji: '🍝', label: 'Dinner started' },
+  { emoji: '🍝', label: 'Dinner launch' },
   { emoji: '🚛', label: 'Trash to curb' },
 ]
 
@@ -38,6 +39,7 @@ const HOME_PRESETS = [
   { emoji: '🧺', label: 'Laundry running' },
   { emoji: '🍝', label: 'Dinner launch' },
   { emoji: '🔥', label: 'Firepit' },
+  { emoji: '🌱', label: 'Lawn mowed' },
 ]
 
 // Signals grouped by category — used in the Signal Picker
@@ -82,6 +84,7 @@ const SIGNAL_GROUPS = [
     signals: [
       { emoji: '🚛', label: 'Trash to curb' },
       { emoji: '🧹', label: 'Cleaning started' },
+      { emoji: '🌱', label: 'Lawn mowed' },
       { emoji: '🔧', label: 'Maintenance done' },
       { emoji: '🚗', label: 'Car borrowed' },
       { emoji: '💊', label: 'Meds taken' },
@@ -107,12 +110,6 @@ function relativeTime(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-function groupReactions(reactions: Reaction[]): { emoji: string; count: number }[] {
-  const map: Record<string, number> = {}
-  for (const r of reactions) map[r.emoji] = (map[r.emoji] ?? 0) + 1
-  return Object.entries(map).map(([emoji, count]) => ({ emoji, count }))
-}
-
 // Returns true when two consecutive events are more than 20 min apart
 function hasGap(a: Event, b: Event): boolean {
   return Math.abs(
@@ -124,8 +121,13 @@ function matchesPreset(query: string, label: string): boolean {
   const q = query.toLowerCase().trim()
   if (q.length < 2) return false
   const l = label.toLowerCase()
-  // Substring match OR any word in the label starts with the query
   return l.includes(q) || l.split(' ').some(word => word.startsWith(q))
+}
+
+function generateInviteCode(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(4)))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('').toUpperCase()
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -155,6 +157,16 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
   // Copy invite toast
   const [copied, setCopied] = useState(false)
+
+  // Search
+  const [searchQuery, setSearchQuery] = useState('')
+
+  // Space rename (owner only)
+  const [editingName, setEditingName] = useState(false)
+  const [newName, setNewName] = useState('')
+
+  // Multi-space
+  const [otherSpaces, setOtherSpaces] = useState<{ id: string; name: string }[]>([])
 
   const fetchAll = useCallback(async () => {
     const [spaceRes, membersRes, eventsRes] = await Promise.all([
@@ -190,6 +202,16 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
     return () => { supabase.removeChannel(channel) }
   }, [spaceId, fetchAll])
+
+  // Load other spaces from user's memberships
+  useEffect(() => {
+    getUserMemberships().then(memberships => {
+      const others = memberships.filter(m => m.space_id !== spaceId)
+      if (others.length > 0) {
+        setOtherSpaces(others.map(m => ({ id: m.space_id, name: m.space.name })))
+      }
+    })
+  }, [spaceId])
 
   // ─── Actions ────────────────────────────────────────────────────────────────
 
@@ -268,9 +290,24 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  function leaveSpace() {
-    localStorage.removeItem('dw_space_id')
-    localStorage.removeItem('dw_member_id')
+  async function regenerateInvite() {
+    if (!space) return
+    const newCode = generateInviteCode()
+    await supabase.from('spaces').update({ invite_code: newCode }).eq('id', space.id)
+    fetchAll()
+  }
+
+  async function saveName() {
+    setEditingName(false)
+    if (!space || !newName.trim() || newName.trim() === space.name) return
+    await supabase.from('spaces').update({ name: newName.trim() }).eq('id', space.id)
+    fetchAll()
+  }
+
+  async function leaveSpace() {
+    if (memberId) {
+      await supabase.from('members').delete().eq('id', memberId)
+    }
     router.push('/')
   }
 
@@ -278,7 +315,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
   const now = new Date()
   const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const cutoff = new Date(Date.now() - 4 * 60 * 60 * 1000)
+  const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000)
 
   const currentEvents = events.filter(e => new Date(e.created_at) >= cutoff)
   const todayEvents   = events.filter(e => {
@@ -291,9 +328,23 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const awayCount = members.filter(m => m.presence_state !== 'home').length
   const hasEvents = currentEvents.length > 0 || todayEvents.length > 0 || earlierEvents.length > 0
 
+  const currentMember = members.find(m => m.id === memberId)
+  const isOwner = currentMember?.role === 'owner'
+  const noMember = !memberId
+
   // Up to 3 suggestions shown below the input while typing
   const suggestMatches = (addLabel.trim() && !showSignalPicker)
     ? ALL_PRESETS.filter(p => matchesPreset(addLabel, p.label)).slice(0, 3)
+    : []
+
+  // Search results — all events matching the query, reverse chron
+  const isSearching = searchQuery.trim().length > 0
+  const searchResults = isSearching
+    ? events.filter(e => {
+        const q = searchQuery.toLowerCase()
+        return e.label.toLowerCase().includes(q) ||
+          (e.note?.toLowerCase().includes(q) ?? false)
+      })
     : []
 
   // ─── Render ─────────────────────────────────────────────────────────────────
@@ -317,17 +368,34 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
     )
   }
 
-  const noMember = !memberId
-
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <div className="mx-auto max-w-[420px] pb-16">
 
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <header className="px-4 pt-8 pb-5">
-          <h1 className="text-xl font-semibold tracking-tight" style={{ color: 'var(--text)' }}>
-            <span className="text-base mr-1 opacity-60">🏠</span>{space.name}
-          </h1>
+          {editingName ? (
+            <input
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              onBlur={saveName}
+              onKeyDown={e => {
+                if (e.key === 'Enter') saveName()
+                if (e.key === 'Escape') setEditingName(false)
+              }}
+              className="text-xl font-semibold tracking-tight w-full bg-transparent outline-none"
+              style={{ color: 'var(--text)', borderBottom: '1px solid var(--border)' }}
+              autoFocus
+            />
+          ) : (
+            <h1
+              className="text-xl font-semibold tracking-tight"
+              style={{ color: 'var(--text)', cursor: isOwner ? 'text' : 'default' }}
+              onClick={() => { if (isOwner) { setNewName(space.name); setEditingName(true) } }}
+            >
+              <span className="text-base mr-1 opacity-60">🏠</span>{space.name}
+            </h1>
+          )}
           <p className="text-xs mt-1 tracking-wide" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
             {homeCount} home • {awayCount} away
           </p>
@@ -372,11 +440,14 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
             <section className="px-4 py-5">
               <SectionLabel>Current</SectionLabel>
               <div className="mt-3">
-                {currentEvents.map((event, i) => (
-                  <div key={event.id}>
-                    {i > 0 && hasGap(currentEvents[i - 1], event) && <div className="h-2" />}
-                    <EventRow event={event} />
-                  </div>
+                {currentEvents.map(event => (
+                  <EventRow
+                    key={event.id}
+                    event={event}
+                    reactionTarget={reactionTarget}
+                    onToggleReaction={setReactionTarget}
+                    onReact={addReaction}
+                  />
                 ))}
               </div>
             </section>
@@ -388,16 +459,15 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         {/* ── Log ────────────────────────────────────────────────────────── */}
         <section className="px-4 py-3">
           <SectionLabel>Log</SectionLabel>
-          <div className="mt-2 flex flex-wrap gap-x-1.5 gap-y-2">
+          <div className="mt-2 flex flex-wrap gap-x-1.5 gap-y-1.5">
             {HOME_PRESETS.map(action => (
               <button
                 key={action.label}
                 onClick={() => !noMember && logEvent(action.emoji, action.label)}
                 disabled={noMember}
-                className="flex items-center gap-1 px-2 py-1 rounded-full text-xs transition-opacity active:opacity-50 disabled:opacity-30"
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs transition-opacity active:opacity-50 disabled:opacity-30"
                 style={{
-                  background: 'var(--surface)',
-                  border: '1px solid rgba(0,0,0,0.06)',
+                  background: 'rgba(0,0,0,0.04)',
                   color: 'var(--text-secondary)',
                 }}
               >
@@ -408,14 +478,12 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
             <button
               onClick={() => !noMember && setShowAdd(true)}
               disabled={noMember}
-              className="flex items-center gap-1 px-2 py-1 rounded-full text-xs transition-opacity active:opacity-50 disabled:opacity-30"
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs transition-opacity active:opacity-50 disabled:opacity-30"
               style={{
-                background: 'transparent',
-                border: '1px dashed rgba(0,0,0,0.10)',
                 color: 'var(--text-muted)',
               }}
             >
-              <span>➕</span>
+              <span>+</span>
               <span>Add event</span>
             </button>
           </div>
@@ -426,8 +494,60 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
           )}
         </section>
 
+        <Divider />
+
+        {/* ── Search ─────────────────────────────────────────────────────── */}
+        <section className="px-4 py-2.5">
+          <div className="flex items-center gap-2">
+            <span className="text-sm select-none" style={{ color: 'var(--text-muted)' }}>🔍</span>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search events…"
+              className="flex-1 text-sm bg-transparent outline-none"
+              style={{ color: 'var(--text)' }}
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="text-xs"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        </section>
+
+        {/* ── Search Results ─────────────────────────────────────────────── */}
+        {isSearching && (
+          <>
+            <Divider />
+            <section className="px-4 py-4">
+              <SectionLabel>Results</SectionLabel>
+              {searchResults.length > 0 ? (
+                <div className="mt-2">
+                  {searchResults.map((event, i) => (
+                    <HistoryRow
+                      key={event.id}
+                      event={event}
+                      prevEvent={null}
+                      reactionTarget={reactionTarget}
+                      onToggleReaction={setReactionTarget}
+                      onReact={addReaction}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>No results.</p>
+              )}
+            </section>
+          </>
+        )}
+
         {/* ── Today ──────────────────────────────────────────────────────── */}
-        {todayEvents.length > 0 && (
+        {!isSearching && todayEvents.length > 0 && (
           <>
             <Divider />
             <section className="px-4 py-4">
@@ -437,7 +557,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                   <HistoryRow
                     key={event.id}
                     event={event}
-                    prevEvent={i > 0 ? todayEvents[i - 1] : null}
+                    prevEvent={null}
                     reactionTarget={reactionTarget}
                     onToggleReaction={setReactionTarget}
                     onReact={addReaction}
@@ -449,7 +569,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         )}
 
         {/* ── Earlier ────────────────────────────────────────────────────── */}
-        {earlierEvents.length > 0 && (
+        {!isSearching && earlierEvents.length > 0 && (
           <>
             <Divider />
             <section className="px-4 py-4">
@@ -459,7 +579,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                   <HistoryRow
                     key={event.id}
                     event={event}
-                    prevEvent={i > 0 ? earlierEvents[i - 1] : null}
+                    prevEvent={null}
                     reactionTarget={reactionTarget}
                     onToggleReaction={setReactionTarget}
                     onReact={addReaction}
@@ -471,7 +591,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         )}
 
         {/* ── Empty state ────────────────────────────────────────────────── */}
-        {!hasEvents && (
+        {!isSearching && !hasEvents && (
           <>
             <Divider />
             <div className="px-4 py-10 text-center">
@@ -482,17 +602,43 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         )}
 
         {/* ── Footer ─────────────────────────────────────────────────────── */}
-        <div className="px-4 pt-6 pb-2 flex items-center justify-between">
-          <button
-            onClick={copyInviteLink}
-            className="text-xs underline transition-colors"
-            style={{ color: copied ? '#16a34a' : 'var(--text-muted)' }}
-          >
-            {copied ? 'Copied!' : 'Copy invite link'}
-          </button>
-          <button onClick={leaveSpace} className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            Leave space
-          </button>
+        <div className="px-4 pt-6 pb-2 space-y-3">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={copyInviteLink}
+              className="text-xs underline transition-colors"
+              style={{ color: copied ? '#16a34a' : 'var(--text-muted)' }}
+            >
+              {copied ? 'Copied!' : 'Copy invite link'}
+            </button>
+            {isOwner && (
+              <button
+                onClick={regenerateInvite}
+                className="text-xs"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                Reset link
+              </button>
+            )}
+            <button onClick={leaveSpace} className="text-xs ml-auto" style={{ color: 'var(--text-muted)' }}>
+              Leave space
+            </button>
+          </div>
+
+          {otherSpaces.length > 0 && (
+            <div className="pt-2" style={{ borderTop: '1px solid var(--border)' }}>
+              {otherSpaces.map(s => (
+                <a
+                  key={s.id}
+                  href={`/space/${s.id}`}
+                  className="block text-xs py-1"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  🏠 {s.name}
+                </a>
+              ))}
+            </div>
+          )}
         </div>
 
       </div>
@@ -654,39 +800,74 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
 // ─── EventRow — used in Current section ───────────────────────────────────────
 
-function EventRow({ event }: { event: Event }) {
-  return (
-    <div className="flex items-start justify-between py-3">
-      <div className="flex items-start gap-3 min-w-0">
-        <span className="text-lg w-6 text-center leading-none mt-px shrink-0">{event.emoji}</span>
-        <div className="min-w-0">
-          <span className="text-sm" style={{ color: 'var(--text)' }}>{event.label}</span>
-          {event.note && (
-            <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--text-muted)' }}>{event.note}</p>
-          )}
-        </div>
-      </div>
-      <span className="text-xs ml-3 shrink-0 tabular-nums" style={{ color: 'var(--text-muted)' }}>
-        {relativeTime(event.created_at)}
-      </span>
-    </div>
-  )
-}
-
-// ─── HistoryRow — used in Today and Earlier sections ─────────────────────────
-
-interface HistoryRowProps {
+interface EventRowProps {
   event: Event
-  prevEvent: Event | null
   reactionTarget: string | null
   onToggleReaction: (id: string | null) => void
   onReact: (eventId: string, emoji: string) => void
 }
 
-function HistoryRow({ event, prevEvent, reactionTarget, onToggleReaction, onReact }: HistoryRowProps) {
+function EventRow({ event, reactionTarget, onToggleReaction, onReact }: EventRowProps) {
   return (
-    <div className="py-0.5">
-      {prevEvent && hasGap(prevEvent, event) && <div className="h-2" />}
+    <div className="mb-4">
+      <button
+        className="flex items-start justify-between w-full text-left py-2.5 rounded-lg active:bg-black/[0.03] transition-colors"
+        onClick={() => onToggleReaction(reactionTarget === event.id ? null : event.id)}
+      >
+        <div className="flex items-start gap-3 min-w-0">
+          <span className="text-lg w-6 text-center leading-none mt-px shrink-0">{event.emoji}</span>
+          <div className="min-w-0">
+            <span className="text-sm" style={{ color: 'var(--text)' }}>{event.label}</span>
+            {event.note && (
+              <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--text-muted)' }}>{event.note}</p>
+            )}
+          </div>
+        </div>
+        <span className="text-xs ml-3 shrink-0 tabular-nums mt-0.5" style={{ color: 'var(--text-muted)' }}>
+          {relativeTime(event.created_at)}
+        </span>
+      </button>
+
+      {event.reactions && event.reactions.length > 0 && (
+        <div className="flex items-center gap-3 pl-9 mt-1 flex-wrap">
+          {event.reactions.map(r => (
+            <span key={r.id} className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              {r.emoji}{r.member?.display_name ? ` ${r.member.display_name}` : ''}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {reactionTarget === event.id && (
+        <div className="flex items-center gap-3 pl-9 mt-2">
+          {REACTION_EMOJIS.map(emoji => (
+            <button
+              key={emoji}
+              onClick={() => onReact(event.id, emoji)}
+              className="text-lg active:scale-110 transition-transform"
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── HistoryRow — used in Today, Earlier, and Search Results sections ─────────
+
+interface HistoryRowProps {
+  event: Event
+  prevEvent: Event | null  // unused, kept for API compatibility
+  reactionTarget: string | null
+  onToggleReaction: (id: string | null) => void
+  onReact: (eventId: string, emoji: string) => void
+}
+
+function HistoryRow({ event, reactionTarget, onToggleReaction, onReact }: HistoryRowProps) {
+  return (
+    <div className="mb-4">
       <button
         className="flex items-start justify-between w-full text-left py-1.5 rounded-lg active:bg-black/[0.03] transition-colors"
         onClick={() => onToggleReaction(reactionTarget === event.id ? null : event.id)}
@@ -706,17 +887,17 @@ function HistoryRow({ event, prevEvent, reactionTarget, onToggleReaction, onReac
       </button>
 
       {event.reactions && event.reactions.length > 0 && (
-        <div className="flex items-center gap-2 pl-8 mt-0.5">
-          {groupReactions(event.reactions).map(g => (
-            <span key={g.emoji} className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              {g.emoji}{g.count > 1 ? ` ${g.count}` : ''}
+        <div className="flex items-center gap-3 pl-8 mt-1 flex-wrap">
+          {event.reactions.map(r => (
+            <span key={r.id} className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              {r.emoji}{r.member?.display_name ? ` ${r.member.display_name}` : ''}
             </span>
           ))}
         </div>
       )}
 
       {reactionTarget === event.id && (
-        <div className="flex items-center gap-3 pl-8 mt-2 mb-1">
+        <div className="flex items-center gap-3 pl-8 mt-2">
           {REACTION_EMOJIS.map(emoji => (
             <button
               key={emoji}

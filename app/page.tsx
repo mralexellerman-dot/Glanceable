@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { getBrowserId, getUserMemberships } from '@/lib/memberships'
 
 const QUESTIONS = [
   'Did someone get the package?',
@@ -18,12 +19,16 @@ export default function Home() {
   const [question] = useState(() => QUESTIONS[Math.floor(Math.random() * QUESTIONS.length)])
 
   useEffect(() => {
-    const spaceId = localStorage.getItem('dw_space_id')
-    if (spaceId) {
-      router.replace(`/space/${spaceId}`)
-    } else {
-      setReady(true)
-    }
+    getBrowserId() // ensure browser_id exists in localStorage
+
+    getUserMemberships().then(ms => {
+      if (ms.length > 0) {
+        // Redirect to most recent space — newest first from query
+        router.replace(`/space/${ms[0].space_id}`)
+      } else {
+        setReady(true)
+      }
+    })
   }, [router])
 
   if (!ready) {

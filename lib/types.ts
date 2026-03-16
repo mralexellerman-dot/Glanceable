@@ -1,4 +1,5 @@
 export type PresenceState = 'home' | 'away' | 'dnd' | 'tbd'
+export type MemberRole = 'owner' | 'member'
 
 export interface Space {
   id: string
@@ -12,6 +13,7 @@ export interface Member {
   space_id: string
   display_name: string
   presence_state: PresenceState
+  role: MemberRole
   created_at: string
 }
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { getBrowserId } from '@/lib/memberships'
 import type { Space, Event } from '@/lib/types'
 
 function relativeTime(dateStr: string): string {
@@ -28,28 +29,46 @@ export default function JoinPage() {
 
   useEffect(() => {
     async function load() {
+      const browserId = getBrowserId()
+
       const { data } = await supabase
         .from('spaces')
         .select('*')
         .eq('invite_code', code)
         .single()
 
-      if (data) {
-        setSpace(data)
-        const { data: events } = await supabase
-          .from('events')
-          .select('*')
-          .eq('space_id', data.id)
-          .order('created_at', { ascending: false })
-          .limit(3)
-        setRecentEvents(events ?? [])
-      } else {
+      if (!data) {
         setNotFound(true)
+        setLoading(false)
+        return
       }
+
+      // Already a member of this space? Go straight in.
+      const { data: existing } = await supabase
+        .from('members')
+        .select('id')
+        .eq('space_id', data.id)
+        .eq('browser_id', browserId)
+        .single()
+
+      if (existing) {
+        router.replace(`/space/${data.id}`)
+        return
+      }
+
+      setSpace(data)
+
+      const { data: events } = await supabase
+        .from('events')
+        .select('*')
+        .eq('space_id', data.id)
+        .order('created_at', { ascending: false })
+        .limit(3)
+      setRecentEvents(events ?? [])
       setLoading(false)
     }
     load()
-  }, [code])
+  }, [code, router])
 
   async function handleJoin() {
     if (!space || !memberName.trim()) return
@@ -57,16 +76,20 @@ export default function JoinPage() {
     setError('')
 
     try {
-      const { data: member, error: err } = await supabase
+      const browserId = getBrowserId()
+
+      const { error: err } = await supabase
         .from('members')
-        .insert({ space_id: space.id, display_name: memberName.trim(), presence_state: 'home' })
-        .select()
-        .single()
+        .insert({
+          space_id: space.id,
+          browser_id: browserId,
+          display_name: memberName.trim(),
+          presence_state: 'home',
+          role: 'member',
+        })
 
       if (err) throw err
 
-      localStorage.setItem('dw_space_id', space.id)
-      localStorage.setItem('dw_member_id', member.id)
       router.push(`/space/${space.id}`)
     } catch {
       setError('Something went wrong. Please try again.')
@@ -87,9 +110,7 @@ export default function JoinPage() {
       <main className="min-h-screen flex items-center justify-center px-6" style={{ background: 'var(--bg)' }}>
         <div className="text-center space-y-3">
           <p style={{ color: 'var(--text-secondary)' }}>This invite link is invalid or has expired.</p>
-          <a href="/" className="text-sm underline" style={{ color: 'var(--text-muted)' }}>
-            Go home
-          </a>
+          <a href="/" className="text-sm underline" style={{ color: 'var(--text-muted)' }}>Go home</a>
         </div>
       </main>
     )
@@ -109,7 +130,6 @@ export default function JoinPage() {
           <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>
             Join {space.name} on Dwellness
           </h1>
-
           {recentEvents.length > 0 && (
             <div className="space-y-2">
               {recentEvents.map(e => (
@@ -123,16 +143,13 @@ export default function JoinPage() {
               ))}
             </div>
           )}
-
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-            See what's happening here.
-          </p>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>See what's happening here.</p>
         </div>
 
         {/* Join form */}
         <div className="space-y-3">
           <label className="block text-sm" style={{ color: 'var(--text-secondary)' }}>
-            What's your name?
+            What's your name in {space.name}?
           </label>
           <input
             type="text"
@@ -140,11 +157,7 @@ export default function JoinPage() {
             onChange={e => setMemberName(e.target.value)}
             placeholder="Mom, Dad, Sam, Felix…"
             className="w-full px-4 py-3 rounded-xl text-base outline-none"
-            style={{
-              border: '1px solid var(--border)',
-              background: 'var(--surface)',
-              color: 'var(--text)',
-            }}
+            style={{ border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
             autoFocus
             onKeyDown={e => e.key === 'Enter' && memberName.trim() && handleJoin()}
           />

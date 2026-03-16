@@ -1,4 +1,4 @@
--- Dwellness MVP schema
+-- Dwellness schema
 -- Run this in your Supabase SQL editor
 
 -- Spaces
@@ -9,13 +9,19 @@ create table spaces (
   created_at timestamptz not null default now()
 );
 
--- Members
+-- Members (one row per browser per space = membership)
+-- browser_id: persistent UUID stored in browser localStorage
+-- user_id: nullable, reserved for future account linking (magic link / OAuth)
 create table members (
   id uuid primary key default gen_random_uuid(),
   space_id uuid not null references spaces(id) on delete cascade,
+  browser_id text not null,
+  user_id uuid references auth.users(id) on delete set null,
   display_name text not null,
   presence_state text not null default 'tbd'
     check (presence_state in ('home', 'away', 'dnd', 'tbd')),
+  role text not null default 'member'
+    check (role in ('owner', 'member')),
   created_at timestamptz not null default now()
 );
 
@@ -30,9 +36,6 @@ create table events (
   created_at timestamptz not null default now()
 );
 
--- Migration for existing installs:
--- alter table events add column if not exists note text;
-
 -- Reactions
 create table reactions (
   id uuid primary key default gen_random_uuid(),
@@ -44,6 +47,7 @@ create table reactions (
 
 -- Indexes
 create index on members(space_id);
+create index on members(browser_id);
 create index on events(space_id, created_at desc);
 create index on reactions(event_id);
 
@@ -62,3 +66,11 @@ create policy "allow_all_reactions" on reactions for all using (true) with check
 alter publication supabase_realtime add table members;
 alter publication supabase_realtime add table events;
 alter publication supabase_realtime add table reactions;
+
+-- Migrations for existing installs:
+-- alter table members add column if not exists role       text not null default 'member' check (role in ('owner', 'member'));
+-- alter table members add column if not exists browser_id text;
+-- alter table members add column if not exists user_id    uuid references auth.users(id) on delete set null;
+-- create index if not exists members_browser_id_idx on members(browser_id);
+-- update members set browser_id = gen_random_uuid()::text where browser_id is null;
+-- alter table members alter column browser_id set not null;

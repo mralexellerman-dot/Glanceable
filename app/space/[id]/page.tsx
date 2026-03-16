@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import SpaceBoard from '@/components/SpaceBoard'
+import { getMemberForSpace } from '@/lib/memberships'
 
 export default function SpacePage() {
   const params = useParams()
@@ -11,16 +12,10 @@ export default function SpacePage() {
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    const storedMemberId = localStorage.getItem('dw_member_id') ?? ''
-    const storedSpaceId = localStorage.getItem('dw_space_id') ?? ''
-
-    // Keep localStorage in sync if navigating directly to a space URL
-    if (storedSpaceId !== spaceId) {
-      localStorage.setItem('dw_space_id', spaceId)
-    }
-
-    setMemberId(storedMemberId)
-    setReady(true)
+    getMemberForSpace(spaceId).then(member => {
+      setMemberId(member?.id ?? '')
+      setReady(true)
+    })
   }, [spaceId])
 
   if (!ready) return null
