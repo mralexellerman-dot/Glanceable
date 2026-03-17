@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { getBrowserId } from '@/lib/memberships'
 import Link from 'next/link'
 
 export default function CreateSpace() {
@@ -20,8 +19,6 @@ export default function CreateSpace() {
     setError('')
 
     try {
-      const browserId = getBrowserId()
-
       const { data: space, error: spaceError } = await supabase
         .from('spaces')
         .insert({ name: spaceName.trim() })
@@ -34,10 +31,8 @@ export default function CreateSpace() {
         .from('members')
         .insert({
           space_id: space.id,
-          browser_id: browserId,
           display_name: memberName.trim(),
           presence_state: 'home',
-          role: 'owner',
         })
         .select()
         .single()
@@ -49,10 +44,10 @@ export default function CreateSpace() {
 
       // Seed ghost demo members so reactions feel named and the space feels shared
       const { data: ghostMembers } = await supabase.from('members').insert([
-        { space_id: space.id, browser_id: 'demo-alex',  display_name: 'Alex',  presence_state: 'home', role: 'member' },
-        { space_id: space.id, browser_id: 'demo-jamie', display_name: 'Jamie', presence_state: 'away', role: 'member' },
-        { space_id: space.id, browser_id: 'demo-sam',   display_name: 'Sam',   presence_state: 'home', role: 'member' },
-        { space_id: space.id, browser_id: 'demo-mom',   display_name: 'Mom',   presence_state: 'away', role: 'member' },
+        { space_id: space.id, display_name: 'Alex',  presence_state: 'home' },
+        { space_id: space.id, display_name: 'Jamie', presence_state: 'away' },
+        { space_id: space.id, display_name: 'Sam',   presence_state: 'home' },
+        { space_id: space.id, display_name: 'Mom',   presence_state: 'away' },
       ]).select()
 
       // Seed demo events
