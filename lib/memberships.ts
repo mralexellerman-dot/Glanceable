@@ -45,6 +45,22 @@ export async function getUserMemberships(): Promise<SpaceMembership[]> {
   }))
 }
 
+// Track visited spaces by ID in localStorage (up to 20, newest first).
+export function trackSpace(spaceId: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    const ids: string[] = JSON.parse(localStorage.getItem('dw_spaces') || '[]')
+    const next = [spaceId, ...ids.filter(id => id !== spaceId)].slice(0, 20)
+    localStorage.setItem('dw_spaces', JSON.stringify(next))
+  } catch {}
+}
+
+// Returns tracked space IDs, newest first.
+export function getTrackedSpaceIds(): string[] {
+  if (typeof window === 'undefined') return []
+  try { return JSON.parse(localStorage.getItem('dw_spaces') || '[]') } catch { return [] }
+}
+
 // The member row for this browser in a specific space, or null if not a member.
 export async function getMemberForSpace(spaceId: string): Promise<Member | null> {
   const browserId = getBrowserId()

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import SpaceBoard from '@/components/SpaceBoard'
-import { getMemberForSpace } from '@/lib/memberships'
+import { getMemberForSpace, trackSpace } from '@/lib/memberships'
 
 export default function SpacePage() {
   const params = useParams()
@@ -12,6 +12,7 @@ export default function SpacePage() {
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
+    trackSpace(spaceId)
     getMemberForSpace(spaceId).then(member => {
       setMemberId(member?.id ?? '')
       setReady(true)

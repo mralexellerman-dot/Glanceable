@@ -42,57 +42,21 @@ export default function CreateSpace() {
       const now = Date.now()
       const min = (n: number) => new Date(now - n * 60_000).toISOString()
 
-      // Seed ghost demo members so reactions feel named and the space feels shared
-      const { data: ghostMembers } = await supabase.from('members').insert([
-        { space_id: space.id, display_name: 'Alex',  presence_state: 'home' },
-        { space_id: space.id, display_name: 'Jamie', presence_state: 'away' },
-        { space_id: space.id, display_name: 'Sam',   presence_state: 'home' },
-        { space_id: space.id, display_name: 'Mom',   presence_state: 'away' },
-      ]).select()
-
-      // Seed demo events
-      // CURRENT (<2h):  Firepit 20m, Dinner launch 60m, Laundry running 119m
-      // TODAY (≥2h):    Amazon retrieved 4h, Dog fed 5h, Cat spotted 6h
-      // EARLIER:        Lawn mowed 3 days, HVAC serviced 3d+3h
-      const { data: seededEvents } = await supabase.from('events').insert([
-        { space_id: space.id, member_id: member.id, emoji: '🔥', label: 'Firepit',          created_at: min(20)   },
-        { space_id: space.id, member_id: member.id, emoji: '🍝', label: 'Dinner launch',    created_at: min(60)   },
-        { space_id: space.id, member_id: member.id, emoji: '🧺', label: 'Laundry running',  created_at: min(119)  },
-        { space_id: space.id, member_id: member.id, emoji: '📦', label: 'Amazon retrieved', created_at: min(240)  },
-        { space_id: space.id, member_id: member.id, emoji: '🐶', label: 'Dog fed',          created_at: min(300)  },
-        { space_id: space.id, member_id: member.id, emoji: '🐈', label: 'Cat spotted',      created_at: min(360)  },
-        { space_id: space.id, member_id: member.id, emoji: '🌱', label: 'Lawn mowed',       created_at: min(4320) },
-        { space_id: space.id, member_id: member.id, emoji: '🔧', label: 'HVAC serviced',    created_at: min(4500) },
-      ]).select()
-
-      // Seed demo reactions
-      if (seededEvents && ghostMembers) {
-        const firepit = seededEvents.find(e => e.label === 'Firepit')
-        const dinner  = seededEvents.find(e => e.label === 'Dinner launch')
-        const amazon  = seededEvents.find(e => e.label === 'Amazon retrieved')
-        const dog     = seededEvents.find(e => e.label === 'Dog fed')
-        const cat     = seededEvents.find(e => e.label === 'Cat spotted')
-
-        const alex  = ghostMembers.find(m => m.display_name === 'Alex')
-        const jamie = ghostMembers.find(m => m.display_name === 'Jamie')
-        const sam   = ghostMembers.find(m => m.display_name === 'Sam')
-        const mom   = ghostMembers.find(m => m.display_name === 'Mom')
-
-        const seeds = [
-          // Firepit: 👍 Alex  ❤️ Jamie
-          ...(firepit && alex  ? [{ event_id: firepit.id, member_id: alex.id,  emoji: '👍' }] : []),
-          ...(firepit && jamie ? [{ event_id: firepit.id, member_id: jamie.id, emoji: '❤️' }] : []),
-          // Dinner launch: 👀 Sam
-          ...(dinner && sam   ? [{ event_id: dinner.id,  member_id: sam.id,   emoji: '👀' }] : []),
-          // Amazon: 👍 Mom
-          ...(amazon && mom   ? [{ event_id: amazon.id,  member_id: mom.id,   emoji: '👍' }] : []),
-          // Dog fed: 🐾 anonymous
-          ...(dog ? [{ event_id: dog.id, member_id: null, emoji: '🐾' }] : []),
-          // Cat spotted: 🐾 anonymous
-          ...(cat ? [{ event_id: cat.id, member_id: null, emoji: '🐾' }] : []),
-        ]
-        if (seeds.length) await supabase.from('reactions').insert(seeds)
-      }
+      // Seed so the space feels recently lived in on first open.
+      // TODAY: spread through today (45m → 7h ago)
+      // EARLIER: two entries from past days
+      // Text-first events (spec v2.1): 60–70% text-only, 30–40% with icon
+      await supabase.from('events').insert([
+        { space_id: space.id, member_id: null, emoji: '',   label: 'Coding with Claude and ChatGPT', created_at: min(30)   },
+        { space_id: space.id, member_id: null, emoji: '🔥', label: 'Firepit',                        created_at: min(90)   },
+        { space_id: space.id, member_id: null, emoji: '🍝', label: 'Dinner started',                 created_at: min(180)  },
+        { space_id: space.id, member_id: null, emoji: '',   label: 'Laundry running',                created_at: min(300)  },
+        { space_id: space.id, member_id: null, emoji: '',   label: 'Amazon retrieved',               created_at: min(420)  },
+        { space_id: space.id, member_id: null, emoji: '🐶', label: 'Dog fed',                        created_at: min(480)  },
+        { space_id: space.id, member_id: null, emoji: '',   label: 'Cat spotted',                    created_at: min(540)  },
+        { space_id: space.id, member_id: null, emoji: '',   label: 'Lawn mowed',                     created_at: min(4320) },
+        { space_id: space.id, member_id: null, emoji: '',   label: 'HVAC serviced',                  created_at: min(4500) },
+      ])
 
       router.push(`/space/${space.id}`)
     } catch {

@@ -6,6 +6,7 @@ create table spaces (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   invite_code text unique not null default upper(encode(gen_random_bytes(4), 'hex')),
+  is_public boolean not null default false,
   created_at timestamptz not null default now()
 );
 
@@ -20,6 +21,7 @@ create table members (
   display_name text not null,
   presence_state text not null default 'tbd'
     check (presence_state in ('home', 'away', 'dnd', 'tbd')),
+  presence_updated_at timestamptz,
   role text not null default 'member'
     check (role in ('owner', 'member')),
   created_at timestamptz not null default now()
@@ -45,6 +47,15 @@ create table reactions (
   created_at timestamptz not null default now()
 );
 
+-- Witnesses (seen-by indicator — one row per member per event)
+create table witnesses (
+  event_id   uuid not null references events(id) on delete cascade,
+  member_id  uuid references members(id) on delete set null,
+  created_at timestamptz not null default now(),
+  primary key (event_id, member_id)
+);
+create index on witnesses(event_id);
+
 -- Indexes
 create index on members(space_id);
 create index on members(browser_id);
@@ -68,9 +79,12 @@ alter publication supabase_realtime add table events;
 alter publication supabase_realtime add table reactions;
 
 -- Migrations for existing installs:
+-- alter table members add column if not exists presence_updated_at timestamptz;
+-- alter table spaces  add column if not exists is_public boolean not null default false;
 -- alter table members add column if not exists role       text not null default 'member' check (role in ('owner', 'member'));
 -- alter table members add column if not exists browser_id text;
 -- alter table members add column if not exists user_id    uuid references auth.users(id) on delete set null;
 -- create index if not exists members_browser_id_idx on members(browser_id);
 -- update members set browser_id = gen_random_uuid()::text where browser_id is null;
 -- alter table members alter column browser_id set not null;
+-- create table if not exists witnesses ( event_id uuid not null references events(id) on delete cascade, member_id uuid references members(id) on delete set null, created_at timestamptz not null default now(), primary key (event_id, member_id) );
