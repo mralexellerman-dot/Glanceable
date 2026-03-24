@@ -1,4 +1,4 @@
-export type PresenceState = 'home' | 'away' | 'dnd' | 'tbd'
+export type PresenceState = 'home' | 'away' | 'out' | 'at_work' | 'dnd' | 'tbd'
 export type MemberRole = 'owner' | 'member'
 
 export interface Space {
@@ -22,6 +22,14 @@ export interface Member {
 export interface Witness {
   event_id: string
   member_id: string | null
+}
+
+export interface Upcoming {
+  id:         string
+  space_id:   string
+  label:      string
+  starts_at:  string
+  created_at: string
 }
 
 export interface Event {

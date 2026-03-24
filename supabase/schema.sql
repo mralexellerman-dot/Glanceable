@@ -78,6 +78,19 @@ alter publication supabase_realtime add table members;
 alter publication supabase_realtime add table events;
 alter publication supabase_realtime add table reactions;
 
+-- Upcoming (read-only display horizon, max 4h ahead)
+create table upcoming (
+  id         uuid primary key default gen_random_uuid(),
+  space_id   uuid not null references spaces(id) on delete cascade,
+  label      text not null,
+  starts_at  timestamptz not null,
+  created_at timestamptz not null default now()
+);
+create index on upcoming(space_id, starts_at);
+alter table upcoming enable row level security;
+create policy "allow_all_upcoming" on upcoming for all using (true) with check (true);
+alter publication supabase_realtime add table upcoming;
+
 -- Migrations for existing installs:
 -- alter table members add column if not exists presence_updated_at timestamptz;
 -- alter table spaces  add column if not exists is_public boolean not null default false;
@@ -88,3 +101,4 @@ alter publication supabase_realtime add table reactions;
 -- update members set browser_id = gen_random_uuid()::text where browser_id is null;
 -- alter table members alter column browser_id set not null;
 -- create table if not exists witnesses ( event_id uuid not null references events(id) on delete cascade, member_id uuid references members(id) on delete set null, created_at timestamptz not null default now(), primary key (event_id, member_id) );
+-- create table if not exists upcoming ( id uuid primary key default gen_random_uuid(), space_id uuid not null references spaces(id) on delete cascade, label text not null, starts_at timestamptz not null, created_at timestamptz not null default now() );

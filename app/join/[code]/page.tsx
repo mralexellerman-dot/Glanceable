@@ -84,7 +84,7 @@ export default function JoinPage() {
           space_id: space.id,
           browser_id: browserId,
           display_name: memberName.trim(),
-          presence_state: 'home',
+          presence_state: 'tbd',
           role: 'member',
         })
 
@@ -128,7 +128,7 @@ export default function JoinPage() {
           style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
         >
           <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>
-            Join {space.name} on Dwellness
+            Join {space.name}
           </h1>
           {recentEvents.length > 0 && (
             <div className="space-y-2">
@@ -143,13 +143,13 @@ export default function JoinPage() {
               ))}
             </div>
           )}
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>See what's happening here.</p>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Tap in to see what's happening.</p>
         </div>
 
         {/* Join form */}
         <div className="space-y-3">
           <label className="block text-sm" style={{ color: 'var(--text-secondary)' }}>
-            What's your name in {space.name}?
+            Your name in {space.name}
           </label>
           <input
             type="text"

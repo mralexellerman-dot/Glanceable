@@ -4,14 +4,33 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
+import { getBrowserId } from '@/lib/memberships'
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type SpaceType = 'Home' | 'Team' | 'Work' | 'Friends' | 'Custom'
+type Step = 'type' | 'name' | 'welcome'
+
+const TYPE_PLACEHOLDERS: Record<SpaceType, string> = {
+  Home:    'Maple House, The Cabin, Beach House…',
+  Team:    'Volleyball Team, Soccer Squad, The Practice…',
+  Work:    'Studio 4B, HQ, The Office…',
+  Friends: 'The Crew, Weekend House, Lake Place…',
+  Custom:  'Name this space…',
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CreateSpace() {
   const router = useRouter()
-  const [step, setStep] = useState<'space' | 'member'>('space')
-  const [spaceName, setSpaceName] = useState('')
+
+  const [step,       setStep]       = useState<Step>('type')
+  const [spaceType,  setSpaceType]  = useState<SpaceType | null>(null)
+  const [spaceName,  setSpaceName]  = useState('')
   const [memberName, setMemberName] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [loading,    setLoading]    = useState(false)
+  const [error,      setError]      = useState('')
+  const [newSpaceId, setNewSpaceId] = useState<string | null>(null)
 
   async function handleCreate() {
     if (!spaceName.trim() || !memberName.trim()) return
@@ -27,38 +46,20 @@ export default function CreateSpace() {
 
       if (spaceError) throw spaceError
 
-      const { data: member, error: memberError } = await supabase
+      const { error: memberError } = await supabase
         .from('members')
         .insert({
-          space_id: space.id,
-          display_name: memberName.trim(),
-          presence_state: 'home',
+          space_id:       space.id,
+          browser_id:     getBrowserId(),
+          display_name:   memberName.trim(),
+          presence_state: 'tbd',
+          role:           'owner',
         })
-        .select()
-        .single()
 
       if (memberError) throw memberError
 
-      const now = Date.now()
-      const min = (n: number) => new Date(now - n * 60_000).toISOString()
-
-      // Seed so the space feels recently lived in on first open.
-      // TODAY: spread through today (45m → 7h ago)
-      // EARLIER: two entries from past days
-      // Text-first events (spec v2.1): 60–70% text-only, 30–40% with icon
-      await supabase.from('events').insert([
-        { space_id: space.id, member_id: null, emoji: '',   label: 'Coding with Claude and ChatGPT', created_at: min(30)   },
-        { space_id: space.id, member_id: null, emoji: '🔥', label: 'Firepit',                        created_at: min(90)   },
-        { space_id: space.id, member_id: null, emoji: '🍝', label: 'Dinner started',                 created_at: min(180)  },
-        { space_id: space.id, member_id: null, emoji: '',   label: 'Laundry running',                created_at: min(300)  },
-        { space_id: space.id, member_id: null, emoji: '',   label: 'Amazon retrieved',               created_at: min(420)  },
-        { space_id: space.id, member_id: null, emoji: '🐶', label: 'Dog fed',                        created_at: min(480)  },
-        { space_id: space.id, member_id: null, emoji: '',   label: 'Cat spotted',                    created_at: min(540)  },
-        { space_id: space.id, member_id: null, emoji: '',   label: 'Lawn mowed',                     created_at: min(4320) },
-        { space_id: space.id, member_id: null, emoji: '',   label: 'HVAC serviced',                  created_at: min(4500) },
-      ])
-
-      router.push(`/space/${space.id}`)
+      setNewSpaceId(space.id)
+      setStep('welcome')
     } catch {
       setError('Something went wrong. Please try again.')
       setLoading(false)
@@ -71,18 +72,50 @@ export default function CreateSpace() {
       style={{ background: 'var(--bg)' }}
     >
       <div className="w-full max-w-[420px] space-y-6">
-        <Link href="/" className="inline-block text-sm" style={{ color: 'var(--text-muted)' }}>
-          ← Back
-        </Link>
 
-        {step === 'space' ? (
+        {/* ── Screen 1: What is this space for? ────────────────────────────── */}
+        {step === 'type' && (
           <>
+            <Link href="/" className="inline-block text-sm" style={{ color: 'var(--text-muted)' }}>
+              ← Back
+            </Link>
+            <h1 className="text-xl font-semibold" style={{ color: 'var(--text)' }}>
+              What is this space for?
+            </h1>
+            <div className="flex flex-wrap gap-2">
+              {(['Home', 'Team', 'Work', 'Friends', 'Custom'] as SpaceType[]).map(t => (
+                <button
+                  key={t}
+                  onClick={() => { setSpaceType(t); setStep('name') }}
+                  className="px-4 py-2.5 rounded-xl text-sm font-medium active:opacity-70"
+                  style={{ background: '#F4F1EC', color: '#3A3630', border: 'none', cursor: 'pointer' }}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              Tap one to get started. You can add more later.
+            </p>
+          </>
+        )}
+
+        {/* ── Screen 2: Name your space ─────────────────────────────────────── */}
+        {step === 'name' && (
+          <>
+            <button
+              onClick={() => setStep('type')}
+              className="text-sm"
+              style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+            >
+              ← Back
+            </button>
             <div>
               <h1 className="text-xl font-semibold" style={{ color: 'var(--text)' }}>
                 Name your space
               </h1>
               <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
-                What do you call the place you share?
+                Invite someone (optional)
               </p>
             </div>
             <div className="space-y-3">
@@ -90,54 +123,27 @@ export default function CreateSpace() {
                 type="text"
                 value={spaceName}
                 onChange={e => setSpaceName(e.target.value)}
-                placeholder="Maple House, Studio 4B, Beach Cabin…"
+                placeholder={spaceType ? TYPE_PLACEHOLDERS[spaceType] : 'Name this space…'}
                 className="w-full px-4 py-3 rounded-xl text-base outline-none"
                 style={{ border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
                 autoFocus
-                onKeyDown={e => e.key === 'Enter' && spaceName.trim() && setStep('member')}
               />
-              <button
-                onClick={() => spaceName.trim() && setStep('member')}
-                disabled={!spaceName.trim()}
-                className="w-full py-3.5 rounded-xl text-sm font-medium text-white transition-opacity disabled:opacity-40 active:opacity-80"
-                style={{ background: '#1A1A18' }}
-              >
-                Continue
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div>
-              <button
-                onClick={() => setStep('space')}
-                className="text-sm mb-4 block"
-                style={{ color: 'var(--text-muted)' }}
-              >
-                ← Back
-              </button>
-              <h1 className="text-xl font-semibold" style={{ color: 'var(--text)' }}>
-                What's your name?
-              </h1>
-              <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
-                How others will see you in {spaceName}.
-              </p>
-            </div>
-            <div className="space-y-3">
               <input
                 type="text"
                 value={memberName}
                 onChange={e => setMemberName(e.target.value)}
-                placeholder="Mom, Dad, Sam, Felix…"
+                placeholder="Your name (Mom, Dad, Sam…)"
                 className="w-full px-4 py-3 rounded-xl text-base outline-none"
                 style={{ border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
-                autoFocus
-                onKeyDown={e => e.key === 'Enter' && memberName.trim() && handleCreate()}
+                onKeyDown={e => e.key === 'Enter' && spaceName.trim() && memberName.trim() && handleCreate()}
               />
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                Spaces work best with others.
+              </p>
               {error && <p className="text-sm text-red-500">{error}</p>}
               <button
                 onClick={handleCreate}
-                disabled={!memberName.trim() || loading}
+                disabled={!spaceName.trim() || !memberName.trim() || loading}
                 className="w-full py-3.5 rounded-xl text-sm font-medium text-white transition-opacity disabled:opacity-40 active:opacity-80"
                 style={{ background: '#1A1A18' }}
               >
@@ -146,6 +152,39 @@ export default function CreateSpace() {
             </div>
           </>
         )}
+
+        {/* ── Screen 3: Join the present. ───────────────────────────────────── */}
+        {step === 'welcome' && newSpaceId && (
+          <>
+            <div>
+              <h1 className="text-xl font-semibold" style={{ color: 'var(--text)' }}>
+                Join the present.
+              </h1>
+              <p className="mt-4 text-base leading-loose" style={{ color: 'var(--text-secondary)' }}>
+                Everyone taps in.<br />
+                You glance.<br />
+                That's it.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <button
+                onClick={() => router.push(`/space/${newSpaceId}`)}
+                className="w-full py-3.5 rounded-xl text-sm font-medium text-white active:opacity-80"
+                style={{ background: '#1A1A18', border: 'none', cursor: 'pointer' }}
+              >
+                Open my space
+              </button>
+              <button
+                onClick={() => router.push('/')}
+                className="w-full py-3 text-sm"
+                style={{ background: 'transparent', color: 'var(--text-muted)', border: 'none', cursor: 'pointer' }}
+              >
+                Keep demo spaces
+              </button>
+            </div>
+          </>
+        )}
+
       </div>
     </main>
   )

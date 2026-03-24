@@ -5,107 +5,257 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { getTrackedSpaceIds } from '@/lib/memberships'
+import { getWeatherCondition } from '@/lib/weather'
+import type { WeatherCondition } from '@/lib/weather'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+function timeOfDayBg(): string {
+  const h = new Date().getHours()
+  if (h >= 5  && h < 11) return 'bg-stone-50'
+  if (h >= 11 && h < 16) return 'bg-stone-100'
+  if (h >= 16 && h < 21) return 'bg-amber-50'
+  return 'bg-stone-100'
+}
+
 function relativeTime(dateStr: string): string {
-  const ms  = Date.now() - new Date(dateStr).getTime()
-  const min = Math.floor(ms / 60_000)
-  const hr  = Math.floor(min / 60)
-  if (min < 1)  return 'now'
+  const now  = Date.now()
+  const then = new Date(dateStr).getTime()
+  const min  = Math.floor((now - then) / 60_000)
+  const hr   = Math.floor(min / 60)
+  if (min < 1)  return 'just now'
   if (min < 60) return `${min}m`
-  if (hr < 24)  return `${hr}h`
+  if (hr  < 5)  return `${hr}h`
+  const todayDs = new Date(now).toDateString()
+  const thenDs  = new Date(then).toDateString()
+  if (thenDs === todayDs)                                    return 'earlier today'
+  if (thenDs === new Date(now - 86_400_000).toDateString()) return 'yesterday'
   return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
 function getPlaceEmoji(name: string): string {
   const n = name.toLowerCase()
-  if (n.includes('cafe') || n.includes('coffee')) return '☕'
-  if (n.includes('office') || n.includes('studio') || n.includes('hq')) return '🏢'
-  if (n.includes('gym') || n.includes('court')) return '🏋️'
+  if (n.includes('church') || n.includes('chapel'))              return '⛪'
+  if (n.includes('hospital') || n.includes('clinic'))            return '🏥'
+  if (n.includes('cafe') || n.includes('coffee'))                return '☕'
+  if (n.includes('office') || n.includes('hq') || n.includes('studio') || n.includes('work')) return '💼'
+  if (n.includes('gym') || n.includes('court') || n.includes('team') || n.includes('practice')) return '🏐'
   if (n.includes('cabin') || n.includes('beach') || n.includes('lake')) return '🏕️'
-  return '🏠'
+  return '🏡'
 }
 
-// Short ambient state for the card (no evidence — just the state word)
-function cardState(events: CardEvent[]): string {
+// ─── Summary engine v2 ────────────────────────────────────────────────────────
+// Priority: recent activity > presence > composite(presence·upcoming) > weather > quiet
+// Composites ([context] · [upcoming]) only when activity is weak and upcoming is near.
+
+function cardSummary(
+  events:           { label: string; created_at: string }[],
+  members:          CardMember[],
+  weather:          WeatherCondition,
+  spaceName:        string = '',
+  nearestUpcoming?: { label: string; starts_at: string },
+): string {
   const now  = Date.now()
   const hour = new Date().getHours()
-  const inLast = (h: number) =>
-    events.filter(e => now - new Date(e.created_at).getTime() < h * 3_600_000)
-  if (inLast(2).length  >= 1) return 'Settling down'
-  if (inLast(6).length  >= 1) return 'Active earlier'
-  if (inLast(24).length >= 1) {
-    if (hour < 10)  return 'Slow morning'
-    if (hour >= 20) return 'Slow evening'
-    return 'Light activity'
+  const n    = spaceName.toLowerCase()
+  const isTeam = /team|practice|league|gym|court|dance|volleyball|soccer|hockey|yoga/.test(n)
+
+  const inLast = (ms: number) =>
+    events.filter(e => now - new Date(e.created_at).getTime() < ms)
+
+  const hot  = inLast(30 * 60_000)
+  const warm = inLast(60 * 60_000)
+  const h4   = inLast(4  * 3_600_000)
+  const h24  = inLast(24 * 3_600_000)
+
+  // Presence — members updated within 10h
+  const visibleM = members.filter(m => {
+    const ts = m.presence_updated_at || ''
+    return ts && (now - new Date(ts).getTime()) / 3_600_000 < 10
+  })
+  const homeN = visibleM.filter(m => m.presence_state === 'home').length
+  const awayN = visibleM.length - homeN
+
+  // Presence context phrase — null when not strong enough to surface
+  function ctx(): string | null {
+    if (visibleM.length < 2) return null
+    if (isTeam)     return awayN === 0 ? 'Team gathering' : null
+    if (awayN === 0) return 'Everyone home'
+    if (homeN === 0) return 'Everyone out'
+    return 'House split'
   }
-  if (hour < 10)  return 'Slow morning'
-  if (hour >= 20) return 'Slow evening'
-  return 'Quiet now'
+
+  // Upcoming label (capitalised standalone; lowercase after ·)
+  let soonMins = Infinity
+  if (nearestUpcoming) {
+    soonMins = (new Date(nearestUpcoming.starts_at).getTime() - now) / 60_000
+  }
+  const hasSoon = soonMins > 0 && soonMins <= 120
+
+  function upLabel(lower = false): string {
+    if (!nearestUpcoming || !hasSoon) return ''
+    const raw  = nearestUpcoming.label.trim().split(/\s+/)[0]
+    const word = lower ? raw.toLowerCase()
+                       : raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
+    return soonMins <= 30 ? `${word} starting` : `${word} soon`
+  }
+
+  function compose(context: string): string {
+    return hasSoon ? `${context} · ${upLabel(true)}` : context
+  }
+
+  // ── 1. Hot activity ───────────────────────────────────────────────────────
+  if (hot.length >= 1) {
+    if (isTeam)    return hot.length >= 2 ? 'Practice active' : 'Team active'
+    if (hour < 11) return 'Morning flow'
+    if (hour < 14) return 'In flow'
+    if (hour < 17) return 'Busy afternoon'
+    if (hour < 21) return 'Settling down'
+    return 'Winding down'
+  }
+
+  // ── 1b. Warm activity ─────────────────────────────────────────────────────
+  if (warm.length >= 1) {
+    if (isTeam)    return 'Team active'
+    if (hour < 11) return 'Morning flow'
+    if (hour < 17) return 'In flow'
+    if (hour < 21) return 'Settling down'
+    return 'Winding down'
+  }
+
+  // ── 2. Moderate activity (1–4h) ───────────────────────────────────────────
+  if (h4.length >= 1) {
+    const c = ctx()
+    if (c) return compose(c)
+    if (hour < 17) return 'Active earlier'
+    if (hour < 21) return 'Quieter now'
+    return 'Quiet evening'
+  }
+
+  // ── 3. No moderate activity — presence + upcoming, or upcoming alone ──────
+  if (hasSoon) {
+    const c = ctx()
+    return c ? compose(c) : upLabel()
+  }
+
+  // ── 4. Environmental modifier ─────────────────────────────────────────────
+  if (weather) {
+    const tod = hour < 11 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night'
+    const adj = weather === 'rain'  ? 'Rainy'
+              : weather === 'storm' ? 'Stormy'
+              : weather === 'snow'  ? 'Snowy'
+              : 'Hot'
+    return `${adj} ${tod}`
+  }
+
+  // ── 5. Older activity (4–24h) + presence ─────────────────────────────────
+  if (h24.length >= 1) {
+    const c = ctx()
+    if (c === 'Everyone home' || c === 'Team gathering') return c
+    if (hour < 11) return 'Calm morning'
+    if (hour < 17) return 'Light day'
+    if (hour < 21) return 'Calm evening'
+    return 'Quiet night'
+  }
+
+  // ── 6. Quiet fallback ─────────────────────────────────────────────────────
+  if (hour < 11) return 'Quiet morning'
+  if (hour < 17) return 'Quiet afternoon'
+  if (hour < 21) return 'Calm evening'
+  return 'Still'
 }
 
-// Anonymous presence dots: ●●○ format, max 3, filled = home+recent
-// Returns empty string if no members
-function presenceDots(
-  members: Array<{ presence_state: string; presence_updated_at?: string | null; created_at: string }>
-): string {
-  if (members.length === 0) return ''
-  const now     = Date.now()
-  const active  = members.filter(m => {
-    if (m.presence_state !== 'home') return false
-    const ts = m.presence_updated_at || m.created_at
-    return (now - new Date(ts).getTime()) / 3_600_000 < 8
-  }).length
-  const nDots   = Math.min(3, members.length)
-  const nFilled = Math.min(active, nDots)
-  return '●'.repeat(nFilled) + '○'.repeat(nDots - nFilled)
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+type CardMember = { space_id?: string; display_name: string; presence_state: string; presence_updated_at?: string | null }
+
+
+function effectivePresenceState(m: CardMember): string {
+  const ts       = m.presence_updated_at || ''
+  const ageHours = ts ? (Date.now() - new Date(ts).getTime()) / 3_600_000 : Infinity
+  if (ageHours > 10) return 'unknown'
+  if (m.presence_state === 'home') return 'home'
+  if (m.presence_state === 'dnd')  return 'quiet'
+  // out, at_work, away all read as away on the placecard
+  return 'away'
+}
+
+function buildPresenceLine(members: CardMember[]): string {
+  // Omit members whose presence hasn't been updated in 10h — too stale to be useful
+  const visible = members.filter(m => {
+    const ts = m.presence_updated_at || ''
+    if (!ts) return false
+    return (Date.now() - new Date(ts).getTime()) / 3_600_000 < 10
+  })
+  if (visible.length === 0) return ''
+
+  if (visible.length <= 3) {
+    return visible.map(m => `${m.display_name} ${effectivePresenceState(m)}`).join(' · ')
+  }
+
+  // Aggregated counts using decayed state
+  const homeCount    = visible.filter(m => effectivePresenceState(m) === 'home').length
+  const awayCount    = visible.filter(m => effectivePresenceState(m) === 'away' || effectivePresenceState(m) === 'quiet').length
+  const unknownCount = visible.filter(m => effectivePresenceState(m) === 'unknown').length
+  const parts: string[] = []
+  if (homeCount    > 0) parts.push(`${homeCount} here`)
+  if (awayCount    > 0) parts.push(`${awayCount} away`)
+  if (unknownCount > 0) parts.push(`${unknownCount} unknown`)
+  return parts.join(' · ')
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface CardEvent { emoji: string; label: string; created_at: string }
+type CardEvent = { text: string; time: string }
 
 interface PlaceCardData {
-  id:          string
-  name:        string
-  emoji:       string
-  state:       string       // 2–3 word ambient state, no evidence
-  dots:        string       // e.g. "●●○" or ""
-  recentEvent: CardEvent | null  // single most recent event
-  isDemo?:     boolean
+  id:         string
+  name:       string
+  icon?:      string
+  presence?:  string
+  summary:    string
+  events:     CardEvent[]
+  freshness?: string   // most recent update — shown subtly in title row
+  isDemo?:    boolean
 }
 
 // ─── Demo cards ───────────────────────────────────────────────────────────────
 
 function buildDemoCards(): PlaceCardData[] {
-  const m = (n: number) => new Date(Date.now() - n * 60_000).toISOString()
+  const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString()
   return [
     {
-      id:    'demo-maple',
-      name:  'Maple House',
-      emoji: '🏠',
-      state: 'Settling down',
-      dots:  '●●○',
-      recentEvent: { emoji: '', label: 'Dinner started', created_at: m(68) },
+      id:       'demo-family-home',
+      name:     'Family Home',
+      icon:     '🏡',
+      presence: 'Mom home · Dad away',
+      summary:  'Settling down',
+      freshness: relativeTime(ago(10)),
+      events: [
+        { text: 'Dinner started',  time: relativeTime(ago(10))  },
+        { text: 'Laundry running', time: relativeTime(ago(25))  },
+        { text: 'Dog fed',         time: relativeTime(ago(60))  },
+        { text: 'Amazon delivered',time: relativeTime(ago(120)) },
+        { text: 'School drop-off', time: relativeTime(ago(360)) },
+        { text: 'Coffee run',      time: relativeTime(ago(480)) },
+      ],
       isDemo: true,
     },
     {
-      id:    'demo-studio',
-      name:  'Studio 4B',
-      emoji: '🏢',
-      state: 'Active earlier',
-      dots:  '●○○',
-      recentEvent: { emoji: '', label: 'Laundry running', created_at: m(210) },
-      isDemo: true,
-    },
-    {
-      id:    'demo-beach',
-      name:  'Beach Cabin',
-      emoji: '🏕️',
-      state: 'Quiet now',
-      dots:  '○○○',
-      recentEvent: { emoji: '', label: 'Dog fed', created_at: m(370) },
+      id:        'demo-volleyball',
+      name:      'Volleyball Team',
+      icon:      '🏐',
+      presence:  '8 here · 2 away',
+      summary:   'Practice active',
+      freshness: relativeTime(ago(8)),
+      events: [
+        { text: 'Drills',           time: relativeTime(ago(8))   },
+        { text: 'Scrimmage',        time: relativeTime(ago(22))  },
+        { text: 'Warmup started',   time: relativeTime(ago(35))  },
+        { text: 'Water break',      time: relativeTime(ago(40))  },
+        { text: 'Players arriving', time: relativeTime(ago(60))  },
+        { text: 'Bus departed',     time: relativeTime(ago(120)) },
+      ],
       isDemo: true,
     },
   ]
@@ -113,76 +263,109 @@ function buildDemoCards(): PlaceCardData[] {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+type RawSpaceData = {
+  ids:      string[]
+  spaces:   { id: string; name: string }[]
+  events:   { space_id: string; emoji: string; label: string; created_at: string }[]
+  upcoming: { space_id: string; label: string; starts_at: string }[]
+  members:  CardMember[]
+}
+
 export default function Home() {
   const router = useRouter()
-  const [demoCards] = useState<PlaceCardData[]>(buildDemoCards)
-  const [realCards, setRealCards] = useState<PlaceCardData[]>([])
-  const [loading, setLoading]     = useState(true)
+  const [demoCards]  = useState<PlaceCardData[]>(buildDemoCards)
+  const [rawData,  setRawData]  = useState<RawSpaceData | null>(null)
+  const [loading,  setLoading]  = useState(true)
+  const [weather,  setWeather]  = useState<WeatherCondition>(null)
 
   useEffect(() => {
     async function load() {
       const ids = getTrackedSpaceIds()
       if (ids.length === 0) { setLoading(false); return }
 
-      const [spacesRes, eventsRes, membersRes] = await Promise.all([
+      const now4h = new Date(Date.now() + 4 * 3_600_000).toISOString()
+      const [spacesRes, eventsRes, upcomingRes, membersRes] = await Promise.all([
         supabase.from('spaces').select('id, name').in('id', ids),
         supabase
           .from('events').select('space_id, emoji, label, created_at')
-          .in('space_id', ids).order('created_at', { ascending: false }).limit(100),
+          .in('space_id', ids).order('created_at', { ascending: false }).limit(200),
         supabase
-          .from('members').select('space_id, presence_state, presence_updated_at, created_at')
+          .from('upcoming').select('space_id, label, starts_at')
+          .in('space_id', ids)
+          .gte('starts_at', new Date().toISOString())
+          .lte('starts_at', now4h)
+          .order('starts_at'),
+        supabase
+          .from('members').select('space_id, display_name, presence_state, presence_updated_at')
           .in('space_id', ids),
       ])
 
-      const spaces  = spacesRes.data  || []
-      const events  = eventsRes.data  || []
-      const members = membersRes.data || []
-
-      const cards: PlaceCardData[] = ids
-        .map(id => spaces.find(s => s.id === id))
-        .filter(Boolean)
-        .map(s => {
-          const sid          = s!.id
-          const spaceEvents  = events.filter(e => e.space_id === sid)
-          const spaceMembers = members.filter(m => m.space_id === sid)
-          return {
-            id:          sid,
-            name:        s!.name,
-            emoji:       getPlaceEmoji(s!.name),
-            state:       cardState(spaceEvents),
-            dots:        presenceDots(spaceMembers),
-            recentEvent: spaceEvents[0] ?? null,
-          }
-        })
-
-      setRealCards(cards)
+      setRawData({
+        ids,
+        spaces:   spacesRes.data   || [],
+        events:   eventsRes.data   || [],
+        upcoming: upcomingRes.data || [],
+        members:  membersRes.data  || [],
+      })
       setLoading(false)
     }
     load()
   }, [])
 
+  // Weather — one fetch per session, updates summaries when resolved
+  useEffect(() => {
+    getWeatherCondition().then(setWeather)
+  }, [])
+
+  // Derive cards from raw data + weather so summaries react to both
+  const realCards: PlaceCardData[] = rawData
+    ? rawData.ids
+        .map(id => rawData.spaces.find(s => s.id === id))
+        .filter(Boolean)
+        .map(s => {
+          const sid             = s!.id
+          const spaceEvents     = rawData.events.filter(e => e.space_id === sid)
+          const spaceMembers    = rawData.members.filter(m => m.space_id === sid)
+          const nearestUpcoming = rawData.upcoming.find(u => u.space_id === sid)
+          const top2 = spaceEvents.slice(0, 2).map(e => ({
+            text: e.emoji ? `${e.emoji} ${e.label}` : e.label,
+            time: relativeTime(e.created_at),
+          }))
+
+          // Most recent update: latest event or presence change
+          const allTs = [
+            spaceEvents[0]?.created_at,
+            ...spaceMembers.map(m => m.presence_updated_at ?? undefined),
+          ].filter((ts): ts is string => !!ts)
+          const latestTs = allTs.reduce<string | null>(
+            (best, ts) => !best || ts > best ? ts : best, null
+          )
+
+          return {
+            id:        sid,
+            name:      s!.name,
+            icon:      getPlaceEmoji(s!.name),
+            presence:  buildPresenceLine(spaceMembers),
+            summary:   cardSummary(spaceEvents, spaceMembers, weather, s!.name, nearestUpcoming ?? undefined),
+            freshness: latestTs ? relativeTime(latestTs) : undefined,
+            events:    top2,
+          }
+        })
+    : []
+
   const allCards = loading ? demoCards : [...realCards, ...demoCards]
 
   return (
-    <main className="min-h-screen px-4 pt-8 pb-16" style={{ background: '#FAFAF8' }}>
-      <div className="max-w-[960px] mx-auto">
+    <div className={`min-h-screen ${timeOfDayBg()}`}>
+      <div className="mx-auto max-w-[480px] px-3 pt-5 pb-10">
 
-        {/* ── App header ───────────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-sm font-semibold" style={{ color: '#333' }}>
-            🏠 Dwellness
-          </h1>
-          <Link
-            href="/create"
-            className="text-xs px-3 py-1.5 rounded-lg font-medium text-white"
-            style={{ background: '#1A1A18' }}
-          >
-            + Create
-          </Link>
+        {/* HEADER */}
+        <div className="px-1 pb-3">
+          <span className="text-[15px] font-semibold text-gray-900">Glanceable</span>
         </div>
 
-        {/* ── Card grid ────────────────────────────────────────────────────── */}
-        <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
+        {/* CARD STACK */}
+        <div className="space-y-2">
           {allCards.map(card => (
             <PlaceCard
               key={card.id}
@@ -192,51 +375,71 @@ export default function Home() {
           ))}
         </div>
 
+        {/* ADD SPACE */}
+        <Link
+          href="/create"
+          className="block w-full text-center py-3 mt-2 rounded-xl text-[13px]"
+          style={{ color: '#B0ABA4', background: 'rgba(0,0,0,0.03)' }}
+        >
+          + Add space
+        </Link>
+
       </div>
-    </main>
+    </div>
   )
 }
 
-// ─── PlaceCard — exactly 3 lines ──────────────────────────────────────────────
+// ─── PlaceCard ────────────────────────────────────────────────────────────────
 
 function PlaceCard({ card, onClick }: { card: PlaceCardData; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="w-full text-left rounded-xl p-3.5 transition-opacity active:opacity-70"
-      style={{ background: '#FFFFFF', border: '1px solid #EBEBEA' }}
+      className="w-full text-left rounded-xl bg-white active:opacity-70"
+      style={{ padding: '11px 16px 12px', boxShadow: '0 1px 2px rgba(0,0,0,0.06)' }}
     >
-      {/* Line 1: place name */}
-      <p
-        className="text-sm font-semibold truncate leading-snug"
-        style={{ color: '#1A1A18' }}
-      >
-        {card.emoji} {card.name}
-      </p>
-
-      {/* Line 2: state (left) + presence dots (right) */}
-      <div className="flex items-center justify-between mt-1.5">
-        <span className="text-xs" style={{ color: '#888' }}>
-          {card.state}
-        </span>
-        {card.dots && (
-          <span className="flex items-center gap-1 text-xs" style={{ color: '#999' }}>
-            <span style={{ opacity: 0.5 }}>👥</span>
-            <span style={{ letterSpacing: '1px', fontSize: '10px' }}>{card.dots}</span>
+      {/* TITLE ROW */}
+      <div className="flex items-center justify-between mb-0.5">
+        <div className="flex items-center gap-1.5 min-w-0">
+          {card.icon && (
+            <span className="shrink-0" style={{ fontSize: '12px', opacity: 0.45 }}>
+              {card.icon}
+            </span>
+          )}
+          <span className="truncate" style={{ fontSize: '13px', fontWeight: 600, color: '#111827' }}>
+            {card.name}
           </span>
-        )}
+        </div>
+        <span className="ml-2 shrink-0 tabular-nums" style={{ fontSize: '11px', color: '#9CA3AF' }}>
+          {card.isDemo
+            ? <span style={{ textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: '10px' }}>Demo</span>
+            : card.freshness}
+        </span>
       </div>
 
-      {/* Line 3: most recent event */}
-      <p
-        className="text-xs mt-1.5 truncate"
-        style={{ color: '#AAA' }}
-      >
-        {card.recentEvent
-          ? `${card.recentEvent.emoji ? card.recentEvent.emoji + ' ' : ''}${card.recentEvent.label}`
-          : <span style={{ fontStyle: 'italic' }}>—</span>
-        }
+      {/* PRESENCE */}
+      {card.presence && (
+        <p className="truncate" style={{ fontSize: '12px', color: '#6B7280', marginBottom: '3px' }}>
+          {card.presence}
+        </p>
+      )}
+
+      {/* SUMMARY */}
+      <p style={{ fontSize: '14px', fontWeight: 600, color: '#111827', lineHeight: 1.3, marginBottom: '5px' }}>
+        {card.summary}
       </p>
+
+      {/* ACTIVITY — max 2 rows */}
+      {card.events.slice(0, 2).map((e, i) => (
+        <div key={i} className="flex items-baseline justify-between" style={{ marginTop: i === 0 ? 0 : '1px' }}>
+          <span className="truncate" style={{ fontSize: '12px', color: '#4B5563', marginRight: '8px' }}>
+            {e.text}
+          </span>
+          <span className="shrink-0 tabular-nums" style={{ fontSize: '11px', color: '#9CA3AF' }}>
+            {e.time}
+          </span>
+        </div>
+      ))}
     </button>
   )
 }
