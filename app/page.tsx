@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { getTrackedSpaceIds } from '@/lib/memberships'
+import { getTrackedSpaceIds, getBrowserId } from '@/lib/memberships'
 import { getWeatherCondition } from '@/lib/weather'
 import type { WeatherCondition } from '@/lib/weather'
 
@@ -167,7 +167,7 @@ function cardSummary(
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type CardMember = { space_id?: string; display_name: string; presence_state: string; presence_updated_at?: string | null }
+type CardMember = { space_id?: string; display_name: string; presence_state: string; presence_updated_at?: string | null; browser_id?: string }
 
 
 function effectivePresenceState(m: CardMember): string {
@@ -180,7 +180,7 @@ function effectivePresenceState(m: CardMember): string {
   return 'away'
 }
 
-function buildPresenceLine(members: CardMember[]): string {
+function buildPresenceLine(members: CardMember[], myBrowserId?: string): string {
   // Omit members whose presence hasn't been updated in 10h — too stale to be useful
   const visible = members.filter(m => {
     const ts = m.presence_updated_at || ''
@@ -189,16 +189,19 @@ function buildPresenceLine(members: CardMember[]): string {
   })
   if (visible.length === 0) return ''
 
-  if (visible.length <= 3) {
-    return visible.map(m => `${m.display_name} ${effectivePresenceState(m)}`).join(' · ')
+  // Single member — "Name · state" or "You · state"
+  if (visible.length === 1) {
+    const m    = visible[0]
+    const name = myBrowserId && m.browser_id === myBrowserId ? 'You' : m.display_name
+    return `${name} · ${effectivePresenceState(m)}`
   }
 
-  // Aggregated counts using decayed state
+  // Multiple members — aggregate counts so the line stays short
   const homeCount    = visible.filter(m => effectivePresenceState(m) === 'home').length
   const awayCount    = visible.filter(m => effectivePresenceState(m) === 'away' || effectivePresenceState(m) === 'quiet').length
   const unknownCount = visible.filter(m => effectivePresenceState(m) === 'unknown').length
   const parts: string[] = []
-  if (homeCount    > 0) parts.push(`${homeCount} here`)
+  if (homeCount    > 0) parts.push(`${homeCount} home`)
   if (awayCount    > 0) parts.push(`${awayCount} away`)
   if (unknownCount > 0) parts.push(`${unknownCount} unknown`)
   return parts.join(' · ')
@@ -296,7 +299,7 @@ export default function Home() {
           .lte('starts_at', now4h)
           .order('starts_at'),
         supabase
-          .from('members').select('space_id, display_name, presence_state, presence_updated_at')
+          .from('members').select('space_id, display_name, presence_state, presence_updated_at, browser_id')
           .in('space_id', ids),
       ])
 
@@ -345,7 +348,7 @@ export default function Home() {
             id:        sid,
             name:      s!.name,
             icon:      getPlaceEmoji(s!.name),
-            presence:  buildPresenceLine(spaceMembers),
+            presence:  buildPresenceLine(spaceMembers, getBrowserId()),
             summary:   cardSummary(spaceEvents, spaceMembers, weather, s!.name, nearestUpcoming ?? undefined),
             freshness: latestTs ? relativeTime(latestTs) : undefined,
             events:    top2,
@@ -417,17 +420,17 @@ function PlaceCard({ card, onClick }: { card: PlaceCardData; onClick: () => void
         </span>
       </div>
 
-      {/* PRESENCE */}
+      {/* SUMMARY */}
+      <p style={{ fontSize: '14px', fontWeight: 600, color: '#111827', lineHeight: 1.3, marginBottom: '2px' }}>
+        {card.summary}
+      </p>
+
+      {/* PRESENCE — one line, below summary */}
       {card.presence && (
-        <p className="truncate" style={{ fontSize: '12px', color: '#6B7280', marginBottom: '3px' }}>
+        <p className="truncate" style={{ fontSize: '12px', color: '#6B7280', marginBottom: card.events.length > 0 ? '5px' : 0 }}>
           {card.presence}
         </p>
       )}
-
-      {/* SUMMARY */}
-      <p style={{ fontSize: '14px', fontWeight: 600, color: '#111827', lineHeight: 1.3, marginBottom: '5px' }}>
-        {card.summary}
-      </p>
 
       {/* ACTIVITY — max 2 rows */}
       {card.events.slice(0, 2).map((e, i) => (

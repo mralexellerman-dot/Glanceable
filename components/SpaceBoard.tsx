@@ -107,71 +107,75 @@ function parseBulk(input: string): string[] {
     .filter(Boolean)
 }
 
-// Presence chips — explicit state setting, context-sensitive
-function buildPresenceChips(spaceName: string): { label: string; state: string }[] {
-  const n = spaceName.toLowerCase()
-  if (/team|practice|league|gym|court|dance|volleyball|soccer|hockey|yoga/.test(n)) return [
-    { label: 'Here',        state: 'home' },
-    { label: 'Away',        state: 'away' },
-    { label: 'At practice', state: 'at_work' },
-  ]
-  if (/office|work|hq|studio|clinic|lab|desk/.test(n)) return [
-    { label: 'Home',    state: 'home' },
-    { label: 'Away',    state: 'away' },
-    { label: 'At work', state: 'at_work' },
-  ]
+// Presence chips — Home and Away only
+function buildPresenceChips(): { label: string; state: string }[] {
   return [
-    { label: 'Home',    state: 'home' },
-    { label: 'Away',    state: 'away' },
-    { label: 'Errands', state: 'out' },
+    { label: 'Home', state: 'home' },
+    { label: 'Away', state: 'away' },
   ]
 }
 
-// Activity chips for Quick Log — activity only, no presence items
-function buildActivityChips(spaceName: string, hour: number): { emoji: string; label: string }[] {
-  const n      = spaceName.toLowerCase()
-  const isHome = /home|house|cabin|apt|flat|condo/.test(n)
-  const isWork = /office|work|hq|studio|clinic|lab|desk/.test(n)
-  const isTeam = /team|practice|league|gym|court|dance|volleyball|soccer|hockey|yoga/.test(n)
+const RECENT_TAP_MS = 45 * 60_000
 
-  if (isTeam) return [
-    { emoji: '', label: 'Warmup' },
-    { emoji: '', label: 'Drills' },
-    { emoji: '', label: 'Scrimmage' },
-    { emoji: '', label: 'Wrapping up' },
-  ]
-  if (isWork) return hour < 12 ? [
-    { emoji: '', label: 'At desk' },
-    { emoji: '', label: 'Meeting' },
-    { emoji: '', label: 'Call' },
-    { emoji: '', label: 'Lunch' },
-  ] : [
-    { emoji: '', label: 'Meeting' },
-    { emoji: '', label: 'Call' },
-    { emoji: '', label: 'Lunch' },
-    { emoji: '', label: 'Coffee break' },
-  ]
-  if (isHome) return hour < 11 ? [
-    { emoji: '',   label: 'Getting coffee' },
-    { emoji: '🐶', label: 'Dog fed' },
-    { emoji: '🧺', label: 'Laundry running' },
-    { emoji: '',   label: 'School run' },
-  ] : hour >= 17 ? [
-    { emoji: '🍝', label: 'Dinner started' },
-    { emoji: '',   label: 'Cooking' },
-    { emoji: '🐶', label: 'Dog fed' },
-    { emoji: '🔥', label: 'Firepit' },
-  ] : [
-    { emoji: '🐶', label: 'Dog fed' },
-    { emoji: '',   label: 'Ordering food' },
-    { emoji: '🧺', label: 'Laundry running' },
-    { emoji: '',   label: 'Relaxing' },
-  ]
+// Activity chips for Quick Log — time-aware, recently-tapped items sink to the end
+function buildActivityChips(
+  spaceName: string,
+  hour: number,
+  recentTaps: Map<string, number> = new Map(),
+): { emoji: string; label: string }[] {
+  const isTeam = /team|practice|league|gym|court|dance|volleyball|soccer|hockey|yoga/.test(spaceName.toLowerCase())
+
+  let chips: { emoji: string; label: string }[]
+  if (isTeam) {
+    chips = [
+      { emoji: '', label: 'Warmup' },
+      { emoji: '', label: 'Drills' },
+      { emoji: '', label: 'Scrimmage' },
+      { emoji: '', label: 'Wrapping up' },
+    ]
+  } else if (hour >= 5 && hour < 11) {
+    chips = [
+      { emoji: '☕', label: 'Coffee' },
+      { emoji: '',   label: 'Breakfast' },
+      { emoji: '',   label: 'Leaving' },
+      { emoji: '',   label: 'Working' },
+      { emoji: '',   label: 'School' },
+    ]
+  } else if (hour >= 11 && hour < 16) {
+    chips = [
+      { emoji: '',   label: 'Lunch' },
+      { emoji: '',   label: 'Working' },
+      { emoji: '',   label: 'Errands' },
+      { emoji: '',   label: 'Out' },
+    ]
+  } else if (hour >= 16 && hour < 21) {
+    chips = [
+      { emoji: '🍝', label: 'Dinner started' },
+      { emoji: '',   label: 'Cooking' },
+      { emoji: '',   label: 'Relaxing' },
+      { emoji: '',   label: 'Home' },
+    ]
+  } else if (hour >= 21 || hour < 2) {
+    chips = [
+      { emoji: '',   label: 'Relaxing' },
+      { emoji: '',   label: 'Watching' },
+      { emoji: '',   label: 'Sleep soon' },
+    ]
+  } else {
+    chips = [
+      { emoji: '',   label: 'Relaxing' },
+      { emoji: '',   label: 'Awake' },
+    ]
+  }
+
+  const now = Date.now()
+  const isRecent = (label: string) => {
+    const t = recentTaps.get(label)
+    return t !== undefined && now - t < RECENT_TAP_MS
+  }
   return [
-    { emoji: '🍝', label: 'Dinner started' },
-    { emoji: '🐶', label: 'Dog fed' },
-    { emoji: '',   label: 'Cooking' },
-    { emoji: '',   label: 'Relaxing' },
+    ...chips.filter(c => !isRecent(c.label)),
+    ...chips.filter(c =>  isRecent(c.label)),
   ]
 }
 
@@ -334,32 +338,11 @@ function ambientSummary(
 // ─── Presence helpers ──────────────────────────────────────────────────────────
 // Decay: 0–10h → show current state   10h+ → hide row entirely
 
-function presenceLabel(state: string): string {
-  if (state === 'home')    return 'home'
-  if (state === 'away')    return 'away'
-  if (state === 'out')     return 'out'
-  if (state === 'at_work') return 'at work'
-  if (state === 'dnd')     return 'quiet'
-  return 'unknown'
-}
 
 function presenceAgeHours(m: Member): number {
   return (Date.now() - new Date(m.presence_updated_at || m.created_at).getTime()) / 3_600_000
 }
 
-// 0–10h: show current state; 10h+ rows are hidden by visibleMembers filter
-function presenceDisplayState(m: Member): string {
-  return presenceLabel(m.presence_state)
-}
-
-// Show age hint for 30min–4h stale presence: "(35m)" or "(2h)"
-// Below 30min: too fresh to need a hint. At 4h+: opacity already signals staleness.
-function presenceTimeHint(m: Member): string {
-  const ageMin = presenceAgeHours(m) * 60
-  if (ageMin < 30 || ageMin >= 240) return ''
-  if (ageMin < 60) return `(${Math.round(ageMin)}m)`
-  return `(${Math.floor(ageMin / 60)}h)`
-}
 
 function presenceOpacity(m: Member): number {
   const ts     = m.presence_updated_at || m.created_at
@@ -479,6 +462,10 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const [logExpanded,         setLogExpanded]         = useState(false)
   const [suggestionsExpanded, setSuggestionsExpanded] = useState(false)
   const [tapInFeedback,       setTapInFeedback]       = useState<string | null>(null)
+  const [customText,          setCustomText]          = useState('')
+  const [customInputOpen,     setCustomInputOpen]     = useState(false)
+  const recentTaps = useRef<Map<string, number>>(new Map())
+  const customInputRef = useRef<HTMLInputElement>(null)
   const [expandedUpcomingId, setExpandedUpcomingId]   = useState<string | null>(null)
   const [weather,            setWeather]              = useState<WeatherCondition>(null)
   const [otherSpaces, setOtherSpaces] = useState<{ id: string; name: string }[]>([])
@@ -533,12 +520,18 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
     fetchAll()
     const ch = supabase
       .channel(`space-${spaceId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'members',  filter: `space_id=eq.${spaceId}` }, fetchAll)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'members', filter: `space_id=eq.${spaceId}` }, (payload) => {
+        setMembers(prev => [...prev, payload.new as Member])
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'members', filter: `space_id=eq.${spaceId}` }, (payload) => {
+        setMembers(prev => prev.map(m => m.id === (payload.new as Member).id ? payload.new as Member : m))
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'events',   filter: `space_id=eq.${spaceId}` }, fetchAll)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'upcoming', filter: `space_id=eq.${spaceId}` }, fetchAll)
       .subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [spaceId, fetchAll])
+
 
   useEffect(() => {
     getUserMemberships().then(ms => {
@@ -661,6 +654,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
   function tapIn(emoji: string, label: string) {
     logEvent(emoji, label)
+    recentTaps.current.set(label, Date.now())
     setTapInFeedback(label)
     if (tapInTimer.current) clearTimeout(tapInTimer.current)
     tapInTimer.current = setTimeout(() => setTapInFeedback(null), 1200)
@@ -712,11 +706,11 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   async function setPresence(state: string) {
     if (!activeMemberId) return
     const now = new Date().toISOString()
-    setMembers(prev => prev.map(m =>
+    const patch = (m: Member) =>
       m.id === activeMemberId
         ? { ...m, presence_state: state as Member['presence_state'], presence_updated_at: now }
         : m
-    ))
+    setMembers(prev => prev.map(patch))
     await supabase.from('members').update({ presence_state: state, presence_updated_at: now }).eq('id', activeMemberId)
   }
 
@@ -837,8 +831,8 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
     : []
 
   // Presence chips (TAP IN) and activity chips (QUICK LOG) are kept separate
-  const presenceChips  = space ? buildPresenceChips(space.name) : []
-  const activityChips  = space ? buildActivityChips(space.name, new Date().getHours()) : []
+  const presenceChips  = buildPresenceChips()
+  const activityChips  = space ? buildActivityChips(space.name, new Date().getHours(), recentTaps.current) : []
 
   // Active presence state for highlighting the current chip
   const myPresenceState = members.find(m => m.id === activeMemberId)?.presence_state ?? ''
@@ -941,21 +935,19 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
             <section className="px-5 pb-5">
               <Label>Current</Label>
               <div className="mt-2 space-y-1.5">
-                {visibleMembers.map(m => {
-                  // 4–10h stale: de-emphasize state label; 0–4h: full opacity
-                  const stateOpacity = presenceAgeHours(m) > 4 ? 0.4 : 1
-                  const hint         = presenceTimeHint(m)
-                  return (
-                    <div key={m.id} className="flex items-center justify-between">
-                      <span style={{ fontSize: '14px', color: '#1f2937', fontWeight: m.id === activeMemberId ? 500 : 400 }}>
-                        {m.display_name}
-                      </span>
-                      <span style={{ fontSize: '13px', color: '#9CA3AF', opacity: stateOpacity }}>
-                        {presenceDisplayState(m)}{hint && <span style={{ fontSize: '11px', marginLeft: '3px' }}>{hint}</span>}
-                      </span>
-                    </div>
-                  )
-                })}
+                {visibleMembers.map(m => (
+                  <div key={m.id} className="flex items-center justify-between">
+                    <span style={{ fontSize: '14px', color: '#1f2937', fontWeight: m.id === activeMemberId ? 500 : 400 }}>
+                      {m.display_name}
+                    </span>
+                    <span style={{ fontSize: '13px', color: '#9CA3AF' }}>
+                      {formatPresence(m)}
+                      {m.presence_state !== 'tbd' && (
+                        <>{' '}· {formatTime(m.presence_updated_at || m.created_at)}</>
+                      )}
+                    </span>
+                  </div>
+                ))}
               </div>
             </section>
           )
@@ -993,6 +985,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
           </section>
         )}
 
+
         {/* ── QUICK LOG ─────────────────────────────────────────────────────── */}
         {!isSearching && (
           <section ref={whRef} className="px-5 pb-5">
@@ -1028,6 +1021,49 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                     more…
                   </button>
                 </div>
+              )}
+              {!tapInFeedback && !customInputOpen && (
+                <button
+                  onClick={() => { setCustomInputOpen(true); setTimeout(() => customInputRef.current?.focus(), 0) }}
+                  style={{ marginTop: '8px', fontSize: '13px', color: '#9CA3AF', border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }}
+                >
+                  Type your own…
+                </button>
+              )}
+              {customInputOpen && (
+                <form
+                  style={{ marginTop: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}
+                  onSubmit={e => {
+                    e.preventDefault()
+                    const text = customText.trim()
+                    if (text) { tapIn('', text); setCustomText(''); setCustomInputOpen(false) }
+                  }}
+                >
+                  <input
+                    ref={customInputRef}
+                    value={customText}
+                    onChange={e => setCustomText(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Escape') { setCustomInputOpen(false); setCustomText('') } }}
+                    placeholder="What's happening…"
+                    style={{
+                      flex: 1,
+                      fontSize: '13px',
+                      color: '#3A3630',
+                      background: '#F4F1EC',
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '6px 10px',
+                      outline: 'none',
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={!customText.trim()}
+                    style={{ fontSize: '13px', color: customText.trim() ? '#1A1A18' : '#9CA3AF', border: 'none', background: 'transparent', cursor: customText.trim() ? 'pointer' : 'default', padding: '0 4px' }}
+                  >
+                    Log
+                  </button>
+                </form>
               )}
               {logExpanded && (
                 <div className="mt-3">
@@ -1498,4 +1534,23 @@ function Label({ children }: { children: React.ReactNode }) {
       {children}
     </p>
   )
+}
+
+function formatPresence(member: Member): string {
+  const state = member.presence_state
+  if (state === 'home') return '✓ here'
+  if (state === 'away') return 'away'
+  if (state === 'dnd') return 'busy'
+  return 'not here yet'
+}
+
+function formatTime(ts?: string | null): string {
+  if (!ts) return ''
+  const diff = Date.now() - new Date(ts).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h`
+  return ''
 }

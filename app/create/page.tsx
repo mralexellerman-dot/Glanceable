@@ -38,29 +38,46 @@ export default function CreateSpace() {
     setError('')
 
     try {
+      const spacePayload = { name: spaceName.trim() }
+      console.log('[create] space insert payload:', spacePayload)
+
       const { data: space, error: spaceError } = await supabase
         .from('spaces')
-        .insert({ name: spaceName.trim() })
+        .insert(spacePayload)
         .select()
         .single()
 
-      if (spaceError) throw spaceError
+      console.log('[create] space insert result:', { data: space, error: spaceError })
 
-      const { error: memberError } = await supabase
+      if (spaceError) {
+        console.error('[create] space insert failed:', spaceError)
+        throw spaceError
+      }
+
+      const memberPayload = {
+        space_id:       space.id,
+        display_name:   memberName.trim(),
+        presence_state: 'tbd',
+      }
+
+      console.log('[create] member insert payload:', memberPayload)
+
+      const { data: memberData, error: memberError } = await supabase
         .from('members')
-        .insert({
-          space_id:       space.id,
-          browser_id:     getBrowserId(),
-          display_name:   memberName.trim(),
-          presence_state: 'tbd',
-          role:           'owner',
-        })
+        .insert(memberPayload)
+        .select()
 
-      if (memberError) throw memberError
+      console.log('[create] member insert result:', { data: memberData, error: memberError })
+
+      if (memberError) {
+        console.error('[create] member insert failed:', memberError)
+        throw memberError
+      }
 
       setNewSpaceId(space.id)
       setStep('welcome')
-    } catch {
+    } catch (err) {
+      console.error('[create] handleCreate error:', err)
       setError('Something went wrong. Please try again.')
       setLoading(false)
     }
