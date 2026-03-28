@@ -40,6 +40,7 @@ export interface Event {
   label: string
   note?: string | null
   created_at: string
+  starts_at?: string
   member?: Pick<Member, 'id' | 'display_name'>
   witnesses?: Witness[]
 }

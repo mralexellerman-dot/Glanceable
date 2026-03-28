@@ -18,8 +18,7 @@ function timeOfDayBg(): string {
   return 'bg-stone-100'
 }
 
-function relativeTime(dateStr: string): string {
-  const now  = Date.now()
+function relativeTime(dateStr: string, now: number = Date.now()): string {
   const then = new Date(dateStr).getTime()
   const min  = Math.floor((now - then) / 60_000)
   const hr   = Math.floor(min / 60)
@@ -31,6 +30,25 @@ function relativeTime(dateStr: string): string {
   if (thenDs === todayDs)                                    return 'earlier today'
   if (thenDs === new Date(now - 86_400_000).toDateString()) return 'yesterday'
   return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function upcomingTimeLabel(startsAt: string, now: number = Date.now()): string {
+  const diffMs = new Date(startsAt).getTime() - now
+  if (diffMs <= 60_000) return 'now'
+  const mins = Math.ceil(diffMs / 60_000)
+  if (mins < 60) return `in ${mins}m`
+  return `in ${Math.round(mins / 60)}h`
+}
+
+function upcomingPrimarySignal(nearestUpcoming: { label: string; starts_at: string } | undefined, now: number): string | null {
+  if (!nearestUpcoming) return null
+  const diffMs = new Date(nearestUpcoming.starts_at).getTime() - now
+  if (diffMs <= 0 || diffMs > 120 * 60_000) return null
+  const mins = Math.ceil(diffMs / 60_000)
+  const main = nearestUpcoming.label.trim().split(/\s+/)[0] || nearestUpcoming.label.trim()
+  if (mins <= 5) return `${main} soon`
+  if (mins < 60) return `${main} in ${mins}m`
+  return `${main} in ${Math.round(mins / 60)}h`
 }
 
 function getPlaceEmoji(name: string): string {
@@ -54,9 +72,12 @@ function cardSummary(
   weather:          WeatherCondition,
   spaceName:        string = '',
   nearestUpcoming?: { label: string; starts_at: string },
+  now: number = Date.now(),
 ): string {
-  const now  = Date.now()
-  const hour = new Date().getHours()
+  const firstUpcoming = upcomingPrimarySignal(nearestUpcoming, now)
+  if (firstUpcoming) return firstUpcoming
+
+  const hour = new Date(now).getHours()
   const n    = spaceName.toLowerCase()
   const isTeam = /team|practice|league|gym|court|dance|volleyball|soccer|hockey|yoga/.test(n)
 
@@ -280,6 +301,7 @@ export default function Home() {
   const [rawData,  setRawData]  = useState<RawSpaceData | null>(null)
   const [loading,  setLoading]  = useState(true)
   const [weather,  setWeather]  = useState<WeatherCondition>(null)
+  const [nowMs, setNowMs] = useState(() => Date.now())
 
   useEffect(() => {
     async function load() {
@@ -320,6 +342,12 @@ export default function Home() {
     getWeatherCondition().then(setWeather)
   }, [])
 
+  // Clock tick for countdown + expiry (makes upcoming and summaries reactive)
+  useEffect(() => {
+    const interval = setInterval(() => setNowMs(Date.now()), 30_000)
+    return () => clearInterval(interval)
+  }, [])
+
   // Derive cards from raw data + weather so summaries react to both
   const realCards: PlaceCardData[] = rawData
     ? rawData.ids
@@ -329,11 +357,20 @@ export default function Home() {
           const sid             = s!.id
           const spaceEvents     = rawData.events.filter(e => e.space_id === sid)
           const spaceMembers    = rawData.members.filter(m => m.space_id === sid)
-          const nearestUpcoming = rawData.upcoming.find(u => u.space_id === sid)
+          const nearestUpcoming = rawData.upcoming
+            .filter(u => u.space_id === sid && new Date(u.starts_at).getTime() > nowMs)
+            .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())[0]
+
           const top2 = spaceEvents.slice(0, 2).map(e => ({
             text: e.emoji ? `${e.emoji} ${e.label}` : e.label,
-            time: relativeTime(e.created_at),
+            time: relativeTime(e.created_at, nowMs),
           }))
+
+          const upcomingEvent = nearestUpcoming
+            ? { text: nearestUpcoming.label, time: upcomingTimeLabel(nearestUpcoming.starts_at, nowMs) }
+            : undefined
+
+          const renderedEvents = (upcomingEvent ? [upcomingEvent] : []).concat(top2).slice(0, 2)
 
           // Most recent update: latest event or presence change
           const allTs = [
@@ -349,9 +386,9 @@ export default function Home() {
             name:      s!.name,
             icon:      getPlaceEmoji(s!.name),
             presence:  buildPresenceLine(spaceMembers, getBrowserId()),
-            summary:   cardSummary(spaceEvents, spaceMembers, weather, s!.name, nearestUpcoming ?? undefined),
+            summary:   cardSummary(spaceEvents, spaceMembers, weather, s!.name, nearestUpcoming ?? undefined, nowMs),
             freshness: latestTs ? relativeTime(latestTs) : undefined,
-            events:    top2,
+            events:    renderedEvents,
           }
         })
     : []

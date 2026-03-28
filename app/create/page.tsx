@@ -58,6 +58,7 @@ export default function CreateSpace() {
         space_id:       space.id,
         display_name:   memberName.trim(),
         presence_state: 'tbd',
+        browser_id:     getBrowserId(),
       }
 
       console.log('[create] member insert payload:', memberPayload)

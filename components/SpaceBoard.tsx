@@ -64,8 +64,7 @@ const ALL_PRESETS = SIGNAL_GROUPS.flatMap(g => g.signals)
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function relativeTime(dateStr: string): string {
-  const now  = Date.now()
+function relativeTime(dateStr: string, now: number = Date.now()): string {
   const then = new Date(dateStr).getTime()
   const min  = Math.floor((now - then) / 60_000)
   const hr   = Math.floor(min / 60)
@@ -79,11 +78,65 @@ function relativeTime(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-function countdownTime(dateStr: string): string {
-  const min = Math.round((new Date(dateStr).getTime() - Date.now()) / 60_000)
+function countdownTime(dateStr: string, now: number = Date.now()): string {
+  const min = Math.round((new Date(dateStr).getTime() - now) / 60_000)
   if (min <= 0)  return 'now'
+  if (min === 1) return '1m'
   if (min < 60)  return `${min}m`
+  if (min < 120) return `1h`
   return `${Math.floor(min / 60)}h`
+}
+
+function formatCountdown(dateStr: string, now: number = Date.now()): string {
+  const ct = countdownTime(dateStr, now)
+  return ct === 'now' ? 'now' : `in ${ct}`
+}
+
+function clockTime(dateStr: string): string {
+  return new Date(dateStr).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}
+
+// Parse natural-language scheduling phrases.
+// Returns { label, starts_at } if matched, null otherwise.
+function parseScheduled(text: string): { label: string; starts_at: string } | null {
+  // "dinner in 20" / "dinner in 20m" / "dinner in 20 min" / "dinner in 2h" / "dinner in 1 hour"
+  const rel = text.match(/^(.+?)\s+in\s+(\d+)\s*(m(?:in(?:ute)?s?)?|h(?:r?s?|ours?)?)$/i)
+  if (rel) {
+    const raw  = rel[1].trim()
+    const label = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
+    const n     = parseInt(rel[2])
+    const unitStr = (rel[3] || 'm').toLowerCase()
+    // Normalize unit: recognize min/minute/minutes/m as minutes, h/hr/hour/hours as hours
+    const isHours = /^h/.test(unitStr) // starts with 'h'
+    const ms    = isHours ? n * 3_600_000 : n * 60_000
+    if (n > 0 && ms <= 24 * 3_600_000) {
+      return { label, starts_at: new Date(Date.now() + ms).toISOString() }
+    }
+  }
+  // "movie at 8" / "pickup at 3:15"
+  const at = text.match(/^(.+?)\s+at\s+(\d{1,2})(?::(\d{2}))?$/i)
+  if (at) {
+    const raw  = at[1].trim()
+    const label = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
+    const h     = parseInt(at[2])
+    const m     = parseInt(at[3] ?? '0')
+    if (h >= 1 && h <= 12 && m >= 0 && m < 60) {
+      const now   = new Date()
+      const nowMs = now.getTime()
+      // Try candidates in order: h (AM/noon), h+12 (PM/midnight)
+      for (const ch of h === 12 ? [12, 0] : [h, h + 12]) {
+        const d = new Date(now)
+        d.setHours(ch, m, 0, 0)
+        if (d.getTime() > nowMs) return { label, starts_at: d.toISOString() }
+      }
+      // Both past — wrap to tomorrow AM
+      const d = new Date(now)
+      d.setDate(d.getDate() + 1)
+      d.setHours(h, m, 0, 0)
+      return { label, starts_at: d.toISOString() }
+    }
+  }
+  return null
 }
 
 function matchesPreset(query: string, label: string): boolean {
@@ -110,7 +163,7 @@ function parseBulk(input: string): string[] {
 // Presence chips — Home and Away only
 function buildPresenceChips(): { label: string; state: string }[] {
   return [
-    { label: 'Home', state: 'home' },
+    { label: 'Here', state: 'home' },
     { label: 'Away', state: 'away' },
   ]
 }
@@ -441,6 +494,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
   const [space,            setSpace]            = useState<Space | null>(null)
   const [members,          setMembers]          = useState<Member[]>([])
+  const [currentMembers,   setCurrentMembers]   = useState<Member[]>([])
   const [serverEvents,     setServerEvents]     = useState<Event[]>([])
   const [optimisticEvents, setOptimisticEvents] = useState<Event[]>([])
   const [upcoming,         setUpcoming]         = useState<Upcoming[]>([])
@@ -462,6 +516,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const [logExpanded,         setLogExpanded]         = useState(false)
   const [suggestionsExpanded, setSuggestionsExpanded] = useState(false)
   const [tapInFeedback,       setTapInFeedback]       = useState<string | null>(null)
+  const [tappedState,         setTappedState]         = useState<string | null>(null)
   const [customText,          setCustomText]          = useState('')
   const [customInputOpen,     setCustomInputOpen]     = useState(false)
   const recentTaps = useRef<Map<string, number>>(new Map())
@@ -486,6 +541,8 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const [queriedAt, setQueriedAt] = useState<number | null>(null)
   // Tick every 30s to update elapsed display
   const [tick, setTick] = useState(0)
+  // Live clock for upcoming calculations
+  const [nowMs, setNowMs] = useState(() => Date.now())
 
   // ─── Data fetching ──────────────────────────────────────────────────────────
 
@@ -532,6 +589,20 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
     return () => { supabase.removeChannel(ch) }
   }, [spaceId, fetchAll])
 
+  // Fetch members for the CURRENT section (ordered by created_at asc)
+  useEffect(() => {
+    let mounted = true
+    supabase
+      .from('members')
+      .select('*')
+      .eq('space_id', spaceId)
+      .order('created_at', { ascending: true })
+      .then(res => {
+        if (!mounted) return
+        if (res.data) setCurrentMembers(res.data)
+      })
+    return () => { mounted = false }
+  }, [spaceId])
 
   useEffect(() => {
     getUserMemberships().then(ms => {
@@ -554,6 +625,12 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   useEffect(() => {
     const t = setInterval(() => setTick(n => n + 1), 30_000)
     return () => clearInterval(t)
+  }, [])
+
+  // Live clock for upcoming / placecard computations
+  useEffect(() => {
+    const i = setInterval(() => setNowMs(Date.now()), 30_000)
+    return () => clearInterval(i)
   }, [])
 
   // Weather — one fetch per session, silent failure
@@ -787,8 +864,26 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
     ...serverEvents,
   ]
 
-  const cutoff12h     = new Date(Date.now() - 12 * 3_600_000)
-  const todayEvents   = combinedEvents.filter(e => new Date(e.created_at) >= cutoff12h)
+  const cutoff12h     = new Date(nowMs - 12 * 3_600_000)
+
+  const upcomingAsEvents: Event[] = upcoming
+    .filter(u => new Date(u.starts_at).getTime() > nowMs)
+    .map(u => ({
+      id: `up-${u.id}`,
+      space_id: u.space_id,
+      member_id: null,
+      emoji: '',
+      label: u.label,
+      note: null,
+      created_at: u.starts_at,
+      starts_at: u.starts_at,
+    }))
+
+  const todayEvents   = combinedEvents.filter(e => {
+    const isInPast = new Date(e.created_at) >= cutoff12h
+    const isNotFuture = !e.starts_at || new Date(e.starts_at).getTime() <= nowMs
+    return isInPast && isNotFuture
+  })
   const earlierEvents = combinedEvents.filter(e => new Date(e.created_at) < cutoff12h)
   const earlierGroups = groupByDay(earlierEvents)
 
@@ -845,6 +940,38 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
     return combinedEvents.filter(e => e.member_id === mid).slice(0, 3)
   }
 
+  // ─── Time-of-day warmth shift (restrained, subtle) ────────────────────────
+  function computeWarmth(): number {
+    const hour = new Date(nowMs).getHours()
+    // 7am–5pm: near neutral, 5pm–9pm: slightly warm, 9pm–2am: warmest, 2am–7am: warm-moderate
+    if (hour >= 7 && hour < 17) return 0        // daytime: neutral
+    if (hour >= 17 && hour < 21) return 0.25    // early evening: slightly warm
+    if (hour >= 21 || hour < 2) return 0.5      // late night: warmest
+    return 0.3                                  // early morning: warm-moderate
+  }
+
+  const warmth = computeWarmth()
+
+  // Interpolate colors based on warmth factor
+  function interpColor(coolHex: string, warmHex: string, w: number): string {
+    const cool = parseInt(coolHex.slice(1), 16)
+    const warm = parseInt(warmHex.slice(1), 16)
+    const coolR = (cool >> 16) & 0xff
+    const coolG = (cool >> 8) & 0xff
+    const coolB = cool & 0xff
+    const warmR = (warm >> 16) & 0xff
+    const warmG = (warm >> 8) & 0xff
+    const warmB = warm & 0xff
+    const r = Math.round(coolR + (warmR - coolR) * w)
+    const g = Math.round(coolG + (warmG - coolG) * w)
+    const b = Math.round(coolB + (warmB - coolB) * w)
+    return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`
+  }
+
+  const cardBg = interpColor('#FCFBF8', '#F8F3EC', warmth)
+  const dividerColor = interpColor('#EDE9E3', '#E8DFD5', warmth)
+  const mutedText = interpColor('#9CA3AF', '#B5A896', warmth)
+
   // ─── Render ─────────────────────────────────────────────────────────────────
 
   if (loading) return (
@@ -863,7 +990,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   return (
     <div className={`min-h-screen ${timeOfDayBg()}`}>
       <div className="mx-auto w-full max-w-[480px] px-3 py-4 min-h-screen flex flex-col">
-        <div className="bg-white rounded-2xl shadow-sm pb-24 flex-1">
+        <div className="rounded-2xl shadow-sm pb-24 flex-1" style={{ background: cardBg }}>
 
         {/* ── 1. HEADER ─────────────────────────────────────────────────────── */}
         <header className="px-5 pt-9 pb-4">
@@ -922,36 +1049,29 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         )}
 
         {/* ── CURRENT ──────────────────────────────────────────────────────── */}
-        {(() => {
-          // Show members updated within 10h; beyond that their presence is too stale to display
-          let visibleMembers = sortedMembers.filter(m => presenceAgeHours(m) < 10)
-          // In empty stage, always pin the active member so CURRENT is never blank
-          if (spaceStage === 'empty' && activeMemberId) {
-            const me = sortedMembers.find(m => m.id === activeMemberId)
-            if (me && !visibleMembers.some(v => v.id === me.id)) visibleMembers = [me, ...visibleMembers]
-          }
-          if (visibleMembers.length === 0) return null
-          return (
-            <section className="px-5 pb-5">
-              <Label>Current</Label>
-              <div className="mt-2 space-y-1.5">
-                {visibleMembers.map(m => (
-                  <div key={m.id} className="flex items-center justify-between">
-                    <span style={{ fontSize: '14px', color: '#1f2937', fontWeight: m.id === activeMemberId ? 500 : 400 }}>
-                      {m.display_name}
-                    </span>
-                    <span style={{ fontSize: '13px', color: '#9CA3AF' }}>
-                      {formatPresence(m)}
-                      {m.presence_state !== 'tbd' && (
-                        <>{' '}· {formatTime(m.presence_updated_at || m.created_at)}</>
-                      )}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )
-        })()}
+        {!isSearching && currentMembers.length > 0 && (
+          <section className="px-5 pb-5">
+            <Label>Current</Label>
+            <div className="mt-2 space-y-1.5">
+              {currentMembers.map(m => (
+                <div key={m.id} className="flex items-center justify-between">
+                  <span style={{ fontSize: '14px', color: '#1f2937', fontWeight: m.id === activeMemberId ? 500 : 400 }}>
+                    {m.display_name}
+                  </span>
+                  <span style={{ fontSize: '13px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    {presenceDotColor(m.presence_state) && (
+                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: presenceDotColor(m.presence_state)!, flexShrink: 0 }} />
+                    )}
+                    {formatPresence(m)}
+                    {m.presence_state !== 'tbd' && (
+                      <>{' '}· {formatTime(m.presence_updated_at || m.created_at)}</>
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* ── TAP IN (presence) ─────────────────────────────────────────────── */}
         {!isSearching && activeMemberId && (
@@ -963,18 +1083,23 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                 return (
                   <button
                     key={chip.label}
-                    onClick={() => setPresence(chip.state)}
+                    onClick={() => {
+                      setPresence(chip.state)
+                      setTappedState(chip.state)
+                      setTimeout(() => setTappedState(null), 250)
+                    }}
                     style={{
                       display:      'inline-flex',
                       alignItems:   'center',
                       padding:      '6px 14px',
                       borderRadius: '999px',
-                      background:   isActive ? '#1A1A18' : '#F4F1EC',
+                      background:   tappedState === chip.state ? '#D1D5DB' : isActive ? '#1A1A18' : '#F4F1EC',
                       fontSize:     '13px',
-                      color:        isActive ? '#FFFFFF' : '#3A3630',
+                      color:        isActive && tappedState !== chip.state ? '#FFFFFF' : '#3A3630',
                       fontWeight:   isActive ? 500 : 400,
                       border:       'none',
                       cursor:       'pointer',
+                      transition:   'background 150ms ease',
                     }}
                   >
                     {chip.label}
@@ -1033,10 +1158,41 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
               {customInputOpen && (
                 <form
                   style={{ marginTop: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}
-                  onSubmit={e => {
+                  onSubmit={async e => {
                     e.preventDefault()
                     const text = customText.trim()
-                    if (text) { tapIn('', text); setCustomText(''); setCustomInputOpen(false) }
+                    if (!text) return
+                    const scheduled = parseScheduled(text)
+                    if (scheduled) {
+                      try {
+                        const { error } = await supabase
+                          .from('upcoming')
+                          .insert({ space_id: spaceId, label: scheduled.label, starts_at: scheduled.starts_at })
+                        if (error) throw error
+
+                        setUpcoming(prev =>
+                          [...prev, { id: `opt-${Date.now()}`, space_id: spaceId, label: scheduled.label, starts_at: scheduled.starts_at, created_at: new Date().toISOString() }]
+                            .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())
+                        )
+                        setTapInFeedback(`${scheduled.label} · ${clockTime(scheduled.starts_at)}`)
+                        if (tapInTimer.current) clearTimeout(tapInTimer.current)
+                        tapInTimer.current = setTimeout(() => setTapInFeedback(null), 2000)
+                      } catch (err) {
+                        const error = err as any
+                        console.error('Upcoming insert failed', {
+                          message: error?.message,
+                          details: error?.details,
+                          hint: error?.hint,
+                          code: error?.code,
+                        })
+                      }
+
+                      setCustomText(''); setCustomInputOpen(false)
+                      return
+                    }
+
+                    tapIn('', text)
+                    setCustomText(''); setCustomInputOpen(false)
                   }}
                 >
                   <input
@@ -1136,7 +1292,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                         {u.label}
                       </span>
                       <span style={{ fontSize: '12px', color: '#6E6A64', tabularNums: true } as React.CSSProperties}>
-                        in {countdownTime(u.starts_at)}
+                        {formatCountdown(u.starts_at, nowMs)}
                       </span>
                     </button>
                     {expanded && (
@@ -1172,7 +1328,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
           </section>
         )}
 
-        <Rule />
+        <Rule color={dividerColor} />
 
         {/* ── Search Results (replaces Today/Earlier when active) ────────────── */}
         {isSearching && (
@@ -1181,7 +1337,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
             {searchResults.length > 0 ? (
               <div className="mt-2">
                 {searchResults.map(e => (
-                  <EventRow key={e.id} event={e} activeMemberId={activeMemberId} onDelete={deleteEvent} />
+                  <EventRow key={e.id} event={e} activeMemberId={activeMemberId} onDelete={deleteEvent} tick={tick} />
                 ))}
               </div>
             ) : (
@@ -1195,7 +1351,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
           <section className="px-5 py-4">
             <Label>Today</Label>
             {todayEvents.map((e, i) => (
-              <EventRow key={e.id} event={e} activeMemberId={activeMemberId} onDelete={deleteEvent} isFirst={i === 0} />
+              <EventRow key={e.id} event={e} activeMemberId={activeMemberId} onDelete={deleteEvent} isFirst={i === 0} tick={tick} nowMs={nowMs} />
             ))}
           </section>
         )}
@@ -1203,7 +1359,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         {/* ── 6. EARLIER ────────────────────────────────────────────────────── */}
         {!isSearching && earlierEvents.length > 0 && (
           <>
-            <Rule />
+            <Rule color={dividerColor} />
             <section className="px-5 py-4">
               <Label>Earlier</Label>
               <div className="mt-2">
@@ -1218,7 +1374,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                       </p>
                     )}
                     {group.events.map(e => (
-                      <EventRow key={e.id} event={e} activeMemberId={activeMemberId} onDelete={deleteEvent} />
+                      <EventRow key={e.id} event={e} activeMemberId={activeMemberId} onDelete={deleteEvent} tick={tick} nowMs={nowMs} />
                     ))}
                   </div>
                 ))}
@@ -1246,7 +1402,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
           </div>
         )}
 
-        <Rule />
+        <Rule color={dividerColor} />
 
         {/* ── 7. SEARCH ─────────────────────────────────────────────────────── */}
         <section className="px-5 py-3">
@@ -1266,7 +1422,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
           </div>
         </section>
 
-        <Rule />
+        <Rule color={dividerColor} />
 
         {/* ── FOOTER ────────────────────────────────────────────────────────── */}
         <div className="px-5 pt-5 pb-3">
@@ -1484,12 +1640,16 @@ interface EventRowProps {
   activeMemberId: string
   onDelete: (id: string) => void
   isFirst?: boolean
+  tick?: number
+  nowMs?: number
 }
 
-function EventRow({ event, activeMemberId, onDelete, isFirst }: EventRowProps) {
+function EventRow({ event, activeMemberId, onDelete, isFirst, tick, nowMs }: EventRowProps) {
+  const now = nowMs ?? 0
   const canDelete = !!activeMemberId
     && event.member_id === activeMemberId
-    && Date.now() - new Date(event.created_at).getTime() < 10 * 60_000
+    && now > 0
+    && now - new Date(event.created_at).getTime() < 10 * 60_000
 
   return (
     <div className="flex items-baseline justify-between" style={{ paddingTop: '5px', paddingBottom: '5px' }}>
@@ -1506,7 +1666,10 @@ function EventRow({ event, activeMemberId, onDelete, isFirst }: EventRowProps) {
       </div>
       <div className="flex items-center gap-1.5 ml-4 shrink-0">
         <span className="text-xs tabular-nums" style={{ color: '#6b7280' }}>
-          {relativeTime(event.created_at)}
+          {event.starts_at && new Date(event.starts_at).getTime() > now
+            ? formatCountdown(event.starts_at, now)
+            : relativeTime(event.created_at, now)}
+          {/* tick: {tick} */}
         </span>
         {canDelete && (
           <button
@@ -1524,8 +1687,8 @@ function EventRow({ event, activeMemberId, onDelete, isFirst }: EventRowProps) {
 
 // ─── Primitives ───────────────────────────────────────────────────────────────
 
-function Rule() {
-  return <div style={{ borderTop: '1px solid #EDE9E3', margin: '0 20px' }} />
+function Rule({ color = '#EDE9E3' }: { color?: string }) {
+  return <div style={{ borderTop: `1px solid ${color}`, margin: '0 20px' }} />
 }
 
 function Label({ children }: { children: React.ReactNode }) {
@@ -1534,6 +1697,13 @@ function Label({ children }: { children: React.ReactNode }) {
       {children}
     </p>
   )
+}
+
+function presenceDotColor(state: string): string | null {
+  if (state === 'home') return '#86efac' // soft green
+  if (state === 'away') return '#d1d5db' // soft gray
+  if (state === 'dnd')  return '#fca5a5' // soft red
+  return null
 }
 
 function formatPresence(member: Member): string {
