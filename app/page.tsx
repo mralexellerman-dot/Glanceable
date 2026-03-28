@@ -1,485 +1,304 @@
-'use client'
-
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import { supabase } from '@/lib/supabase'
-import { getTrackedSpaceIds, getBrowserId } from '@/lib/memberships'
-import { getWeatherCondition } from '@/lib/weather'
-import type { WeatherCondition } from '@/lib/weather'
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function timeOfDayBg(): string {
-  const h = new Date().getHours()
-  if (h >= 5  && h < 11) return 'bg-stone-50'
-  if (h >= 11 && h < 16) return 'bg-stone-100'
-  if (h >= 16 && h < 21) return 'bg-amber-50'
-  return 'bg-stone-100'
-}
-
-function relativeTime(dateStr: string, now: number = Date.now()): string {
-  const then = new Date(dateStr).getTime()
-  const min  = Math.floor((now - then) / 60_000)
-  const hr   = Math.floor(min / 60)
-  if (min < 1)  return 'just now'
-  if (min < 60) return `${min}m`
-  if (hr  < 5)  return `${hr}h`
-  const todayDs = new Date(now).toDateString()
-  const thenDs  = new Date(then).toDateString()
-  if (thenDs === todayDs)                                    return 'earlier today'
-  if (thenDs === new Date(now - 86_400_000).toDateString()) return 'yesterday'
-  return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
-
-function upcomingTimeLabel(startsAt: string, now: number = Date.now()): string {
-  const diffMs = new Date(startsAt).getTime() - now
-  if (diffMs <= 60_000) return 'now'
-  const mins = Math.ceil(diffMs / 60_000)
-  if (mins < 60) return `in ${mins}m`
-  return `in ${Math.round(mins / 60)}h`
-}
-
-function upcomingPrimarySignal(nearestUpcoming: { label: string; starts_at: string } | undefined, now: number): string | null {
-  if (!nearestUpcoming) return null
-  const diffMs = new Date(nearestUpcoming.starts_at).getTime() - now
-  if (diffMs <= 0 || diffMs > 120 * 60_000) return null
-  const mins = Math.ceil(diffMs / 60_000)
-  const main = nearestUpcoming.label.trim().split(/\s+/)[0] || nearestUpcoming.label.trim()
-  if (mins <= 5) return `${main} soon`
-  if (mins < 60) return `${main} in ${mins}m`
-  return `${main} in ${Math.round(mins / 60)}h`
-}
-
-function getPlaceEmoji(name: string): string {
-  const n = name.toLowerCase()
-  if (n.includes('church') || n.includes('chapel'))              return '⛪'
-  if (n.includes('hospital') || n.includes('clinic'))            return '🏥'
-  if (n.includes('cafe') || n.includes('coffee'))                return '☕'
-  if (n.includes('office') || n.includes('hq') || n.includes('studio') || n.includes('work')) return '💼'
-  if (n.includes('gym') || n.includes('court') || n.includes('team') || n.includes('practice')) return '🏐'
-  if (n.includes('cabin') || n.includes('beach') || n.includes('lake')) return '🏕️'
-  return '🏡'
-}
-
-// ─── Summary engine v2 ────────────────────────────────────────────────────────
-// Priority: recent activity > presence > composite(presence·upcoming) > weather > quiet
-// Composites ([context] · [upcoming]) only when activity is weak and upcoming is near.
-
-function cardSummary(
-  events:           { label: string; created_at: string }[],
-  members:          CardMember[],
-  weather:          WeatherCondition,
-  spaceName:        string = '',
-  nearestUpcoming?: { label: string; starts_at: string },
-  now: number = Date.now(),
-): string {
-  const firstUpcoming = upcomingPrimarySignal(nearestUpcoming, now)
-  if (firstUpcoming) return firstUpcoming
-
-  const hour = new Date(now).getHours()
-  const n    = spaceName.toLowerCase()
-  const isTeam = /team|practice|league|gym|court|dance|volleyball|soccer|hockey|yoga/.test(n)
-
-  const inLast = (ms: number) =>
-    events.filter(e => now - new Date(e.created_at).getTime() < ms)
-
-  const hot  = inLast(30 * 60_000)
-  const warm = inLast(60 * 60_000)
-  const h4   = inLast(4  * 3_600_000)
-  const h24  = inLast(24 * 3_600_000)
-
-  // Presence — members updated within 10h
-  const visibleM = members.filter(m => {
-    const ts = m.presence_updated_at || ''
-    return ts && (now - new Date(ts).getTime()) / 3_600_000 < 10
-  })
-  const homeN = visibleM.filter(m => m.presence_state === 'home').length
-  const awayN = visibleM.length - homeN
-
-  // Presence context phrase — null when not strong enough to surface
-  function ctx(): string | null {
-    if (visibleM.length < 2) return null
-    if (isTeam)     return awayN === 0 ? 'Team gathering' : null
-    if (awayN === 0) return 'Everyone home'
-    if (homeN === 0) return 'Everyone out'
-    return 'House split'
-  }
-
-  // Upcoming label (capitalised standalone; lowercase after ·)
-  let soonMins = Infinity
-  if (nearestUpcoming) {
-    soonMins = (new Date(nearestUpcoming.starts_at).getTime() - now) / 60_000
-  }
-  const hasSoon = soonMins > 0 && soonMins <= 120
-
-  function upLabel(lower = false): string {
-    if (!nearestUpcoming || !hasSoon) return ''
-    const raw  = nearestUpcoming.label.trim().split(/\s+/)[0]
-    const word = lower ? raw.toLowerCase()
-                       : raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
-    return soonMins <= 30 ? `${word} starting` : `${word} soon`
-  }
-
-  function compose(context: string): string {
-    return hasSoon ? `${context} · ${upLabel(true)}` : context
-  }
-
-  // ── 1. Hot activity ───────────────────────────────────────────────────────
-  if (hot.length >= 1) {
-    if (isTeam)    return hot.length >= 2 ? 'Practice active' : 'Team active'
-    if (hour < 11) return 'Morning flow'
-    if (hour < 14) return 'In flow'
-    if (hour < 17) return 'Busy afternoon'
-    if (hour < 21) return 'Settling down'
-    return 'Winding down'
-  }
-
-  // ── 1b. Warm activity ─────────────────────────────────────────────────────
-  if (warm.length >= 1) {
-    if (isTeam)    return 'Team active'
-    if (hour < 11) return 'Morning flow'
-    if (hour < 17) return 'In flow'
-    if (hour < 21) return 'Settling down'
-    return 'Winding down'
-  }
-
-  // ── 2. Moderate activity (1–4h) ───────────────────────────────────────────
-  if (h4.length >= 1) {
-    const c = ctx()
-    if (c) return compose(c)
-    if (hour < 17) return 'Active earlier'
-    if (hour < 21) return 'Quieter now'
-    return 'Quiet evening'
-  }
-
-  // ── 3. No moderate activity — presence + upcoming, or upcoming alone ──────
-  if (hasSoon) {
-    const c = ctx()
-    return c ? compose(c) : upLabel()
-  }
-
-  // ── 4. Environmental modifier ─────────────────────────────────────────────
-  if (weather) {
-    const tod = hour < 11 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night'
-    const adj = weather === 'rain'  ? 'Rainy'
-              : weather === 'storm' ? 'Stormy'
-              : weather === 'snow'  ? 'Snowy'
-              : 'Hot'
-    return `${adj} ${tod}`
-  }
-
-  // ── 5. Older activity (4–24h) + presence ─────────────────────────────────
-  if (h24.length >= 1) {
-    const c = ctx()
-    if (c === 'Everyone home' || c === 'Team gathering') return c
-    if (hour < 11) return 'Calm morning'
-    if (hour < 17) return 'Light day'
-    if (hour < 21) return 'Calm evening'
-    return 'Quiet night'
-  }
-
-  // ── 6. Quiet fallback ─────────────────────────────────────────────────────
-  if (hour < 11) return 'Quiet morning'
-  if (hour < 17) return 'Quiet afternoon'
-  if (hour < 21) return 'Calm evening'
-  return 'Still'
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-type CardMember = { space_id?: string; display_name: string; presence_state: string; presence_updated_at?: string | null; browser_id?: string }
-
-
-function effectivePresenceState(m: CardMember): string {
-  const ts       = m.presence_updated_at || ''
-  const ageHours = ts ? (Date.now() - new Date(ts).getTime()) / 3_600_000 : Infinity
-  if (ageHours > 10) return 'unknown'
-  if (m.presence_state === 'home') return 'home'
-  if (m.presence_state === 'dnd')  return 'quiet'
-  // out, at_work, away all read as away on the placecard
-  return 'away'
-}
-
-function buildPresenceLine(members: CardMember[], myBrowserId?: string): string {
-  // Omit members whose presence hasn't been updated in 10h — too stale to be useful
-  const visible = members.filter(m => {
-    const ts = m.presence_updated_at || ''
-    if (!ts) return false
-    return (Date.now() - new Date(ts).getTime()) / 3_600_000 < 10
-  })
-  if (visible.length === 0) return ''
-
-  // Single member — "Name · state" or "You · state"
-  if (visible.length === 1) {
-    const m    = visible[0]
-    const name = myBrowserId && m.browser_id === myBrowserId ? 'You' : m.display_name
-    return `${name} · ${effectivePresenceState(m)}`
-  }
-
-  // Multiple members — aggregate counts so the line stays short
-  const homeCount    = visible.filter(m => effectivePresenceState(m) === 'home').length
-  const awayCount    = visible.filter(m => effectivePresenceState(m) === 'away' || effectivePresenceState(m) === 'quiet').length
-  const unknownCount = visible.filter(m => effectivePresenceState(m) === 'unknown').length
-  const parts: string[] = []
-  if (homeCount    > 0) parts.push(`${homeCount} home`)
-  if (awayCount    > 0) parts.push(`${awayCount} away`)
-  if (unknownCount > 0) parts.push(`${unknownCount} unknown`)
-  return parts.join(' · ')
-}
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type CardEvent = { text: string; time: string }
-
-interface PlaceCardData {
-  id:         string
-  name:       string
-  icon?:      string
-  presence?:  string
-  summary:    string
-  events:     CardEvent[]
-  freshness?: string   // most recent update — shown subtly in title row
-  isDemo?:    boolean
-}
-
-// ─── Demo cards ───────────────────────────────────────────────────────────────
-
-function buildDemoCards(): PlaceCardData[] {
-  const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString()
-  return [
-    {
-      id:       'demo-family-home',
-      name:     'Family Home',
-      icon:     '🏡',
-      presence: 'Mom home · Dad away',
-      summary:  'Settling down',
-      freshness: relativeTime(ago(10)),
-      events: [
-        { text: 'Dinner started',  time: relativeTime(ago(10))  },
-        { text: 'Laundry running', time: relativeTime(ago(25))  },
-        { text: 'Dog fed',         time: relativeTime(ago(60))  },
-        { text: 'Amazon delivered',time: relativeTime(ago(120)) },
-        { text: 'School drop-off', time: relativeTime(ago(360)) },
-        { text: 'Coffee run',      time: relativeTime(ago(480)) },
-      ],
-      isDemo: true,
-    },
-    {
-      id:        'demo-volleyball',
-      name:      'Volleyball Team',
-      icon:      '🏐',
-      presence:  '8 here · 2 away',
-      summary:   'Practice active',
-      freshness: relativeTime(ago(8)),
-      events: [
-        { text: 'Drills',           time: relativeTime(ago(8))   },
-        { text: 'Scrimmage',        time: relativeTime(ago(22))  },
-        { text: 'Warmup started',   time: relativeTime(ago(35))  },
-        { text: 'Water break',      time: relativeTime(ago(40))  },
-        { text: 'Players arriving', time: relativeTime(ago(60))  },
-        { text: 'Bus departed',     time: relativeTime(ago(120)) },
-      ],
-      isDemo: true,
-    },
-  ]
-}
-
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
-type RawSpaceData = {
-  ids:      string[]
-  spaces:   { id: string; name: string }[]
-  events:   { space_id: string; emoji: string; label: string; created_at: string }[]
-  upcoming: { space_id: string; label: string; starts_at: string }[]
-  members:  CardMember[]
-}
-
 export default function Home() {
-  const router = useRouter()
-  const [demoCards]  = useState<PlaceCardData[]>(buildDemoCards)
-  const [rawData,  setRawData]  = useState<RawSpaceData | null>(null)
-  const [loading,  setLoading]  = useState(true)
-  const [weather,  setWeather]  = useState<WeatherCondition>(null)
-  const [nowMs, setNowMs] = useState(() => Date.now())
-
-  useEffect(() => {
-    async function load() {
-      const ids = getTrackedSpaceIds()
-      if (ids.length === 0) { setLoading(false); return }
-
-      const now4h = new Date(Date.now() + 4 * 3_600_000).toISOString()
-      const [spacesRes, eventsRes, upcomingRes, membersRes] = await Promise.all([
-        supabase.from('spaces').select('id, name').in('id', ids),
-        supabase
-          .from('events').select('space_id, emoji, label, created_at')
-          .in('space_id', ids).order('created_at', { ascending: false }).limit(200),
-        supabase
-          .from('upcoming').select('space_id, label, starts_at')
-          .in('space_id', ids)
-          .gte('starts_at', new Date().toISOString())
-          .lte('starts_at', now4h)
-          .order('starts_at'),
-        supabase
-          .from('members').select('space_id, display_name, presence_state, presence_updated_at, browser_id')
-          .in('space_id', ids),
-      ])
-
-      setRawData({
-        ids,
-        spaces:   spacesRes.data   || [],
-        events:   eventsRes.data   || [],
-        upcoming: upcomingRes.data || [],
-        members:  membersRes.data  || [],
-      })
-      setLoading(false)
-    }
-    load()
-  }, [])
-
-  // Weather — one fetch per session, updates summaries when resolved
-  useEffect(() => {
-    getWeatherCondition().then(setWeather)
-  }, [])
-
-  // Clock tick for countdown + expiry (makes upcoming and summaries reactive)
-  useEffect(() => {
-    const interval = setInterval(() => setNowMs(Date.now()), 30_000)
-    return () => clearInterval(interval)
-  }, [])
-
-  // Derive cards from raw data + weather so summaries react to both
-  const realCards: PlaceCardData[] = rawData
-    ? rawData.ids
-        .map(id => rawData.spaces.find(s => s.id === id))
-        .filter(Boolean)
-        .map(s => {
-          const sid             = s!.id
-          const spaceEvents     = rawData.events.filter(e => e.space_id === sid)
-          const spaceMembers    = rawData.members.filter(m => m.space_id === sid)
-          const nearestUpcoming = rawData.upcoming
-            .filter(u => u.space_id === sid && new Date(u.starts_at).getTime() > nowMs)
-            .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())[0]
-
-          const top2 = spaceEvents.slice(0, 2).map(e => ({
-            text: e.emoji ? `${e.emoji} ${e.label}` : e.label,
-            time: relativeTime(e.created_at, nowMs),
-          }))
-
-          const upcomingEvent = nearestUpcoming
-            ? { text: nearestUpcoming.label, time: upcomingTimeLabel(nearestUpcoming.starts_at, nowMs) }
-            : undefined
-
-          const renderedEvents = (upcomingEvent ? [upcomingEvent] : []).concat(top2).slice(0, 2)
-
-          // Most recent update: latest event or presence change
-          const allTs = [
-            spaceEvents[0]?.created_at,
-            ...spaceMembers.map(m => m.presence_updated_at ?? undefined),
-          ].filter((ts): ts is string => !!ts)
-          const latestTs = allTs.reduce<string | null>(
-            (best, ts) => !best || ts > best ? ts : best, null
-          )
-
-          return {
-            id:        sid,
-            name:      s!.name,
-            icon:      getPlaceEmoji(s!.name),
-            presence:  buildPresenceLine(spaceMembers, getBrowserId()),
-            summary:   cardSummary(spaceEvents, spaceMembers, weather, s!.name, nearestUpcoming ?? undefined, nowMs),
-            freshness: latestTs ? relativeTime(latestTs) : undefined,
-            events:    renderedEvents,
-          }
-        })
-    : []
-
-  const allCards = loading ? demoCards : [...realCards, ...demoCards]
-
   return (
-    <div className={`min-h-screen ${timeOfDayBg()}`}>
-      <div className="mx-auto max-w-[480px] px-3 pt-5 pb-10">
-
-        {/* HEADER */}
-        <div className="px-1 pb-3">
-          <span className="text-[15px] font-semibold text-gray-900">Glanceable</span>
-        </div>
-
-        {/* CARD STACK */}
-        <div className="space-y-2">
-          {allCards.map(card => (
-            <PlaceCard
-              key={card.id}
-              card={card}
-              onClick={() => card.isDemo ? router.push('/create') : router.push(`/space/${card.id}`)}
-            />
-          ))}
-        </div>
-
-        {/* ADD SPACE */}
-        <Link
-          href="/create"
-          className="block w-full text-center py-3 mt-2 rounded-xl text-[13px]"
-          style={{ color: '#B0ABA4', background: 'rgba(0,0,0,0.03)' }}
-        >
-          + Add space
-        </Link>
-
-      </div>
-    </div>
-  )
-}
-
-// ─── PlaceCard ────────────────────────────────────────────────────────────────
-
-function PlaceCard({ card, onClick }: { card: PlaceCardData; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="w-full text-left rounded-xl bg-white active:opacity-70"
-      style={{ padding: '11px 16px 12px', boxShadow: '0 1px 2px rgba(0,0,0,0.06)' }}
-    >
-      {/* TITLE ROW */}
-      <div className="flex items-center justify-between mb-0.5">
-        <div className="flex items-center gap-1.5 min-w-0">
-          {card.icon && (
-            <span className="shrink-0" style={{ fontSize: '12px', opacity: 0.45 }}>
-              {card.icon}
-            </span>
-          )}
-          <span className="truncate" style={{ fontSize: '13px', fontWeight: 600, color: '#111827' }}>
-            {card.name}
-          </span>
-        </div>
-        <span className="ml-2 shrink-0 tabular-nums" style={{ fontSize: '11px', color: '#9CA3AF' }}>
-          {card.isDemo
-            ? <span style={{ textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: '10px' }}>Demo</span>
-            : card.freshness}
-        </span>
-      </div>
-
-      {/* SUMMARY */}
-      <p style={{ fontSize: '14px', fontWeight: 600, color: '#111827', lineHeight: 1.3, marginBottom: '2px' }}>
-        {card.summary}
-      </p>
-
-      {/* PRESENCE — one line, below summary */}
-      {card.presence && (
-        <p className="truncate" style={{ fontSize: '12px', color: '#6B7280', marginBottom: card.events.length > 0 ? '5px' : 0 }}>
-          {card.presence}
+    <div className="min-h-screen bg-white">
+      {/* Hero Section */}
+      <section className="max-w-4xl mx-auto px-6 py-20 text-center">
+        <h1 className="text-7xl font-bold mb-6 tracking-tight">
+          GLANCEABLE
+        </h1>
+        
+        <h2 className="text-4xl mb-12 text-gray-700 font-light">
+          JOIN THE PRESENT
+        </h2>
+        
+        <p className="text-3xl font-semibold mb-6">
+          Stop micro-texting.
         </p>
-      )}
-
-      {/* ACTIVITY — max 2 rows */}
-      {card.events.slice(0, 2).map((e, i) => (
-        <div key={i} className="flex items-baseline justify-between" style={{ marginTop: i === 0 ? 0 : '1px' }}>
-          <span className="truncate" style={{ fontSize: '12px', color: '#4B5563', marginRight: '8px' }}>
-            {e.text}
-          </span>
-          <span className="shrink-0 tabular-nums" style={{ fontSize: '11px', color: '#9CA3AF' }}>
-            {e.time}
-          </span>
+        
+        <div className="text-xl text-gray-600 mb-10 space-y-3 max-w-md mx-auto">
+          <p>"Where are you?"</p>
+          <p>"When will you be home?"</p>
+          <p>"Did you leave yet?"</p>
         </div>
-      ))}
-    </button>
-  )
+        
+        <p className="text-2xl mb-12 max-w-2xl mx-auto leading-relaxed">
+          Just tap in. Just glance. Know what's happening.
+        </p>
+        
+        <a 
+          href="/create"
+          className="inline-block bg-black text-white px-14 py-5 rounded-xl text-xl font-semibold hover:bg-gray-800 transition-colors"
+        >
+          Start in 10 Seconds
+        </a>
+      </section>
+
+      {/* How It Works */}
+      <section className="max-w-5xl mx-auto px-6 py-20 bg-gray-50">
+        <h3 className="text-4xl font-bold text-center mb-16">
+          How It Works
+        </h3>
+        
+        <div className="grid md:grid-cols-3 gap-12 text-center">
+          <div>
+            <div className="text-6xl font-bold text-gray-900 mb-4">1</div>
+            <p className="text-xl text-gray-700">
+              Tap in when you arrive or leave
+            </p>
+          </div>
+          
+          <div>
+            <div className="text-6xl font-bold text-gray-900 mb-4">2</div>
+            <p className="text-xl text-gray-700">
+              Others glance to see where you are
+            </p>
+          </div>
+          
+          <div>
+            <div className="text-6xl font-bold text-gray-900 mb-4">3</div>
+            <p className="text-xl text-gray-700">
+              No more "where are you?" texts
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Before/After */}
+      <section className="max-w-5xl mx-auto px-6 py-20">
+        <div className="grid md:grid-cols-2 gap-12">
+          {/* Without Glanceable */}
+          {/* Without Glanceable */}
+<div className="bg-red-50 p-8 rounded-xl">
+  <h4 className="text-2xl font-bold mb-6 text-red-900">
+    WITHOUT GLANCEABLE
+  </h4>
+  <div className="space-y-2 text-gray-700 text-lg">
+    <p>"Where are you?"</p>
+    <p>"Are you almost home?"</p>
+    <p>"Are you home yet?"</p>
+    <p>"Did you leave work?"</p>
+    <p>"Text me when you get there"</p>
+  </div>
+  <p className="mt-6 text-red-900 font-semibold">
+    20+ times a day.
+  </p>
+          </div>
+
+          {/* With Glanceable */}
+          <div className="bg-green-50 p-8 rounded-xl">
+            <h4 className="text-2xl font-bold mb-6 text-green-900">
+              WITH GLANCEABLE
+            </h4>
+            <div className="bg-white p-6 rounded-lg shadow-sm text-left">
+              {/* Space header */}
+              <div className="mb-4 pb-3 border-b border-gray-200">
+                <p className="text-base font-semibold text-gray-900">🏠 Home</p>
+                <p className="text-sm text-gray-600 italic">Settling down</p>
+              </div>
+              
+              {/* Current presence */}
+              <div className="mb-4">
+                <p className="text-xs font-semibold text-gray-500 mb-2">CURRENT</p>
+                <div className="space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span>Alex ✓ home</span>
+                    <span className="text-gray-400">just now</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span>Sarah → on the way</span>
+                    <span className="text-gray-400">10m ago</span>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Upcoming */}
+              <div className="mb-4 pb-3 border-b border-gray-200">
+                <p className="text-xs font-semibold text-gray-500 mb-2">UPCOMING</p>
+                <div className="flex justify-between text-sm">
+                  <span>🍕 Pizza delivery</span>
+                  <span className="text-gray-600">6:30 PM (30m)</span>
+                </div>
+              </div>
+              
+              {/* Recent activity */}
+              <div>
+                <div className="space-y-1">
+                  <div className="flex justify-between text-sm text-gray-600">
+                    <span>📦 Amazon arrived</span>
+                    <span className="text-gray-400">15m ago</span>
+                  </div>
+                  <div className="flex justify-between text-sm text-gray-600">
+                    <span>Dog walked</span>
+                    <span className="text-gray-400">1h ago</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p className="mt-6 text-green-900 font-semibold">
+              Zero texts. Just glance.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* For Families */}
+      <section className="max-w-4xl mx-auto px-6 py-20 text-center">
+        <h3 className="text-4xl font-bold mb-6">For Families</h3>
+        <p className="text-xl text-gray-700 max-w-2xl mx-auto mb-4">
+          Stop asking "where are you?"
+        </p>
+        <p className="text-xl text-gray-700 max-w-2xl mx-auto mb-4">
+          Stop explaining "I'm almost home"
+        </p>
+        <p className="text-xl text-gray-700 max-w-2xl mx-auto">
+          Just glance. Just know.
+        </p>
+      </section>
+
+      {/* For Teams */}
+      <section className="max-w-4xl mx-auto px-6 py-20 text-center bg-gray-50">
+        <h3 className="text-4xl font-bold mb-6">For Teams</h3>
+        <p className="text-xl text-gray-700 max-w-2xl mx-auto mb-4">
+          Stop group text chaos.
+        </p>
+        <p className="text-xl text-gray-700 max-w-2xl mx-auto mb-4">
+          Stop roll call before practice.
+        </p>
+        <p className="text-xl text-gray-700 max-w-2xl mx-auto">
+          Just glance. Know who's here.
+        </p>
+      </section>
+
+      {/* For Parents */}
+      <section className="max-w-4xl mx-auto px-6 py-20">
+        <h3 className="text-4xl font-bold text-center mb-12">
+          For Parents
+        </h3>
+        
+        <div className="max-w-2xl mx-auto text-center space-y-6">
+          <p className="text-2xl text-gray-800">
+            You text because you worry.
+          </p>
+          
+          <p className="text-2xl text-gray-800">
+            They don't respond because it's exhausting.
+          </p>
+          
+          <div className="bg-gray-50 p-8 rounded-xl my-8">
+            <p className="text-xl font-semibold text-gray-900 mb-4">
+              The Compromise:
+            </p>
+            <p className="text-lg text-gray-700 leading-relaxed">
+              They tap when they arrive.<br />
+              You glance. You know they're safe.<br />
+              No nagging. No guilt.
+            </p>
+          </div>
+          
+          <p className="text-xl text-gray-700">
+            Stop helicopter parenting without stopping caring.
+          </p>
+        </div>
+      </section>
+
+      {/* Lighter Than Life360 */}
+      <section className="max-w-5xl mx-auto px-6 py-20 bg-gray-50">
+        <h3 className="text-4xl font-bold text-center mb-4">
+          Lighter Than Life360
+        </h3>
+        <p className="text-center text-xl text-gray-600 mb-16">
+          Coordination without surveillance
+        </p>
+        
+        <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+          {/* Life360 Column */}
+          <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-8">
+            <div className="text-center mb-6">
+              <h4 className="text-2xl font-bold text-red-900">Life360</h4>
+              <p className="text-red-700 text-sm mt-2">Surveillance-based</p>
+            </div>
+            
+            <div className="space-y-6">
+              <div>
+                <p className="text-sm font-semibold text-red-800 mb-1">TRACKING</p>
+                <p className="text-lg text-red-900">24/7 GPS monitoring</p>
+              </div>
+              
+              <div>
+                <p className="text-sm font-semibold text-red-800 mb-1">BATTERY</p>
+                <p className="text-lg text-red-900">Heavy drain</p>
+              </div>
+              
+              <div>
+                <p className="text-sm font-semibold text-red-800 mb-1">PRIVACY</p>
+                <p className="text-lg text-red-900">Always watching</p>
+              </div>
+              
+              <div>
+                <p className="text-sm font-semibold text-red-800 mb-1">CONTROL</p>
+                <p className="text-lg text-red-900">Parent decides</p>
+              </div>
+              
+              <div>
+                <p className="text-sm font-semibold text-red-800 mb-1">PHILOSOPHY</p>
+                <p className="text-lg text-red-900 font-semibold">Surveillance</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Glanceable Column */}
+          <div className="bg-green-50 border-2 border-green-200 rounded-2xl p-8">
+            <div className="text-center mb-6">
+              <h4 className="text-2xl font-bold text-green-900">Glanceable</h4>
+              <p className="text-green-700 text-sm mt-2">Respect-based</p>
+            </div>
+            
+            <div className="space-y-6">
+              <div>
+                <p className="text-sm font-semibold text-green-800 mb-1">TRACKING</p>
+                <p className="text-lg text-green-900">Tap when ready</p>
+              </div>
+              
+              <div>
+                <p className="text-sm font-semibold text-green-800 mb-1">BATTERY</p>
+                <p className="text-lg text-green-900">Minimal usage</p>
+              </div>
+              
+              <div>
+                <p className="text-sm font-semibold text-green-800 mb-1">PRIVACY</p>
+                <p className="text-lg text-green-900">Your choice</p>
+              </div>
+              
+              <div>
+                <p className="text-sm font-semibold text-green-800 mb-1">CONTROL</p>
+                <p className="text-lg text-green-900">You decide</p>
+              </div>
+              
+              <div>
+                <p className="text-sm font-semibold text-green-800 mb-1">PHILOSOPHY</p>
+                <p className="text-lg text-green-900 font-semibold">Respect</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <p className="text-center mt-16 text-2xl text-gray-700 font-semibold">
+          Same peace of mind. Less invasion.
+        </p>
+      </section>
+
+      {/* Final CTA */}
+      <section className="max-w-4xl mx-auto px-6 py-20 text-center">
+        <a 
+          href="/create"
+          className="inline-block bg-black text-white px-14 py-5 rounded-xl text-xl font-semibold hover:bg-gray-800 transition-colors"
+        >
+          Start in 10 Seconds
+        </a>
+        <p className="mt-6 text-gray-600">
+          No setup. No tutorial. No credit card.
+        </p>
+      </section>
+    </div>
+  );
 }

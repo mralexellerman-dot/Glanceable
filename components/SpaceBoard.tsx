@@ -494,7 +494,6 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
   const [space,            setSpace]            = useState<Space | null>(null)
   const [members,          setMembers]          = useState<Member[]>([])
-  const [currentMembers,   setCurrentMembers]   = useState<Member[]>([])
   const [serverEvents,     setServerEvents]     = useState<Event[]>([])
   const [optimisticEvents, setOptimisticEvents] = useState<Event[]>([])
   const [upcoming,         setUpcoming]         = useState<Upcoming[]>([])
@@ -588,21 +587,6 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
       .subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [spaceId, fetchAll])
-
-  // Fetch members for the CURRENT section (ordered by created_at asc)
-  useEffect(() => {
-    let mounted = true
-    supabase
-      .from('members')
-      .select('*')
-      .eq('space_id', spaceId)
-      .order('created_at', { ascending: true })
-      .then(res => {
-        if (!mounted) return
-        if (res.data) setCurrentMembers(res.data)
-      })
-    return () => { mounted = false }
-  }, [spaceId])
 
   useEffect(() => {
     getUserMemberships().then(ms => {
@@ -988,8 +972,8 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   )
 
   return (
-    <div className={`min-h-screen ${timeOfDayBg()}`}>
-      <div className="mx-auto w-full max-w-[480px] px-3 py-4 min-h-screen flex flex-col">
+    <div className={`min-h-screen ${timeOfDayBg()} lg:bg-slate-50`}>
+      <div className="mx-auto w-full max-w-[480px] md:max-w-[640px] xl:max-w-[760px] px-3 py-4 min-h-screen flex flex-col">
         <div className="rounded-2xl shadow-sm pb-24 flex-1" style={{ background: cardBg }}>
 
         {/* ── 1. HEADER ─────────────────────────────────────────────────────── */}
@@ -1049,33 +1033,41 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         )}
 
         {/* ── CURRENT ──────────────────────────────────────────────────────── */}
-        {!isSearching && currentMembers.length > 0 && (
-          <section className="px-5 pb-5">
-            <Label>Current</Label>
-            <div className="mt-2 space-y-1.5">
-              {currentMembers.map(m => (
-                <div key={m.id} className="flex items-center justify-between">
-                  <span style={{ fontSize: '14px', color: '#1f2937', fontWeight: m.id === activeMemberId ? 500 : 400 }}>
-                    {m.display_name}
-                  </span>
-                  <span style={{ fontSize: '13px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    {presenceDotColor(m.presence_state) && (
-                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: presenceDotColor(m.presence_state)!, flexShrink: 0 }} />
-                    )}
-                    {formatPresence(m)}
-                    {m.presence_state !== 'tbd' && (
-                      <>{' '}· {formatTime(m.presence_updated_at || m.created_at)}</>
-                    )}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
+        {(() => {
+          let visibleMembers = sortedMembers.filter(m => presenceAgeHours(m) < 10)
+          if (spaceStage === 'empty' && activeMemberId) {
+            const me = sortedMembers.find(m => m.id === activeMemberId)
+            if (me && !visibleMembers.some(v => v.id === me.id)) visibleMembers = [me, ...visibleMembers]
+          }
+          if (visibleMembers.length === 0) return null
+          return (
+            <section className="px-5 pb-5 lg:pb-4">
+              <Label>Current</Label>
+              <div className="mt-2 space-y-1.5">
+                {visibleMembers.map(m => (
+                  <div key={m.id} className="flex items-center justify-between">
+                    <span style={{ fontSize: '14px', color: '#1f2937', fontWeight: m.id === activeMemberId ? 500 : 400 }}>
+                      {m.display_name}
+                    </span>
+                    <span style={{ fontSize: '13px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      {presenceDotColor(m.presence_state) && (
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: presenceDotColor(m.presence_state)!, flexShrink: 0 }} />
+                      )}
+                      {formatPresence(m)}
+                      {m.presence_state !== 'tbd' && (
+                        <>{' '}· {formatTime(m.presence_updated_at || m.created_at)}</>
+                      )}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )
+        })()}
 
         {/* ── TAP IN (presence) ─────────────────────────────────────────────── */}
         {!isSearching && activeMemberId && (
-          <section className="px-5 pb-4">
+          <section className="px-5 pb-4 lg:pb-3">
             <Label>Tap in</Label>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {presenceChips.map(chip => {
@@ -1113,7 +1105,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
         {/* ── QUICK LOG ─────────────────────────────────────────────────────── */}
         {!isSearching && (
-          <section ref={whRef} className="px-5 pb-5">
+          <section ref={whRef} className="px-5 pb-5 lg:pb-4">
             <Label>Quick log</Label>
             <div className="mt-2">
               {tapInFeedback ? (
@@ -1267,7 +1259,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
         {/* ── UPCOMING ─────────────────────────────────────────────────────── */}
         {!isSearching && upcomingItems.length > 0 && spaceStage === 'alive' && (
-          <section className="px-5 pb-5">
+          <section className="px-5 pb-5 lg:pb-4">
             <Label>Upcoming</Label>
             <div className="mt-1">
               {upcomingItems.map(u => {
@@ -1348,7 +1340,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
         {/* ── TODAY ─────────────────────────────────────────────────────────── */}
         {!isSearching && todayEvents.length > 0 && (
-          <section className="px-5 py-4">
+          <section className="px-5 py-4 lg:py-3">
             <Label>Today</Label>
             {todayEvents.map((e, i) => (
               <EventRow key={e.id} event={e} activeMemberId={activeMemberId} onDelete={deleteEvent} isFirst={i === 0} tick={tick} nowMs={nowMs} />
@@ -1360,7 +1352,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         {!isSearching && earlierEvents.length > 0 && (
           <>
             <Rule color={dividerColor} />
-            <section className="px-5 py-4">
+            <section className="px-5 py-4 lg:py-3">
               <Label>Earlier</Label>
               <div className="mt-2">
                 {earlierGroups.map((group, gi) => (
