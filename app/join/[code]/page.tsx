@@ -75,26 +75,39 @@ export default function JoinPage() {
     setJoining(true)
     setError('')
 
-    try {
-      const browserId = getBrowserId()
+    const browserId = getBrowserId()
 
-      const { error: err } = await supabase
-        .from('members')
-        .insert({
-          space_id: space.id,
-          browser_id: browserId,
-          display_name: memberName.trim(),
-          presence_state: 'tbd',
-          role: 'member',
-        })
+    // Check for existing membership first (handles duplicate gracefully)
+    const { data: existing } = await supabase
+      .from('members')
+      .select('id')
+      .eq('space_id', space.id)
+      .eq('browser_id', browserId)
+      .single()
 
-      if (err) throw err
-
+    if (existing) {
       router.push(`/space/${space.id}`)
-    } catch {
-      setError('Something went wrong. Please try again.')
-      setJoining(false)
+      return
     }
+
+    const { error: err } = await supabase
+      .from('members')
+      .insert({
+        space_id: space.id,
+        browser_id: browserId,
+        display_name: memberName.trim(),
+        presence_state: 'tbd',
+        role: 'member',
+      })
+
+    if (err) {
+      console.error('JOIN ERROR', err)
+      setError(err.message)
+      setJoining(false)
+      return
+    }
+
+    router.push(`/space/${space.id}`)
   }
 
   if (loading) {

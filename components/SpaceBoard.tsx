@@ -517,7 +517,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const [tapInFeedback,       setTapInFeedback]       = useState<string | null>(null)
   const [tappedState,         setTappedState]         = useState<string | null>(null)
   const [customText,          setCustomText]          = useState('')
-  const [customInputOpen,     setCustomInputOpen]     = useState(false)
+
   const recentTaps = useRef<Map<string, number>>(new Map())
   const customInputRef = useRef<HTMLInputElement>(null)
   const [expandedUpcomingId, setExpandedUpcomingId]   = useState<string | null>(null)
@@ -1139,15 +1139,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                   </button>
                 </div>
               )}
-              {!tapInFeedback && !customInputOpen && (
-                <button
-                  onClick={() => { setCustomInputOpen(true); setTimeout(() => customInputRef.current?.focus(), 0) }}
-                  style={{ marginTop: '8px', fontSize: '13px', color: '#9CA3AF', border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }}
-                >
-                  Type your own…
-                </button>
-              )}
-              {customInputOpen && (
+              {!tapInFeedback && (
                 <form
                   style={{ marginTop: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}
                   onSubmit={async e => {
@@ -1179,19 +1171,19 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                         })
                       }
 
-                      setCustomText(''); setCustomInputOpen(false)
+                      setCustomText('')
                       return
                     }
 
                     tapIn('', text)
-                    setCustomText(''); setCustomInputOpen(false)
+                    setCustomText('')
                   }}
                 >
                   <input
                     ref={customInputRef}
                     value={customText}
                     onChange={e => setCustomText(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Escape') { setCustomInputOpen(false); setCustomText('') } }}
+                    onKeyDown={e => { if (e.key === 'Escape') { setCustomText('') } }}
                     placeholder="What's happening…"
                     style={{
                       flex: 1,
@@ -1438,18 +1430,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                 Reset link
               </button>
             )}
-            <button
-              onClick={() => {
-                const next = !nudgesDisabled
-                setNudgesDisabled(next)
-                saveNudgesDisabled(spaceId, next)
-                if (next) setNudge(null)
-              }}
-              className="text-xs"
-              style={{ color: nudgesDisabled ? '#C4C0B8' : '#D0CCCA', border: 'none', background: 'none', cursor: 'pointer' }}
-            >
-              {nudgesDisabled ? 'Nudges off' : 'Nudges on'}
-            </button>
+            {/* Nudges toggle hidden until feature is defined */}
             <button onClick={leaveSpace} className="text-xs ml-auto" style={{ color: '#D0CCCA', border: 'none', background: 'none', cursor: 'pointer' }}>
               Leave space
             </button>
