@@ -97,7 +97,6 @@ export default function JoinPage() {
         browser_id: browserId,
         display_name: memberName.trim(),
         presence_state: 'tbd',
-        role: 'member',
       })
 
     if (err) {
