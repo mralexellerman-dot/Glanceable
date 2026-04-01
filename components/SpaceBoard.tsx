@@ -879,6 +879,19 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const earlierEvents = combinedEvents.filter(e => new Date(e.created_at) < cutoff12h)
   const earlierGroups = groupByDay(earlierEvents)
 
+  // Build map of latest recent activity per member (within 30 min)
+  const recentActivityByMemberId = new Map<string, Event>()
+  const thirtyMinAgo = nowMs - 30 * 60_000
+  for (const event of combinedEvents) {
+    if (!event.member_id) continue
+    const eventMs = new Date(event.created_at).getTime()
+    if (eventMs < thirtyMinAgo) continue
+    const existing = recentActivityByMemberId.get(event.member_id)
+    if (!existing || eventMs > new Date(existing.created_at).getTime()) {
+      recentActivityByMemberId.set(event.member_id, event)
+    }
+  }
+
   // All members, sorted by presence state (here first, away after), then by recency within each group
   const sortedMembers = [...members].sort((a, b) => {
     const stateOrder = { 'home': 0, 'away': 1, 'dnd': 2, 'tbd': 3 }
@@ -1057,23 +1070,34 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
           return (
             <section className="px-5 pb-5 lg:pb-4">
               <Label>Current</Label>
-              <div className="mt-2 space-y-1.5">
-                {visibleMembers.map(m => (
-                  <div key={m.id} className="flex items-center justify-between">
-                    <span style={{ fontSize: '14px', color: '#1f2937', fontWeight: m.id === activeMemberId ? 500 : 400 }}>
-                      {m.display_name}
-                    </span>
-                    <span style={{ fontSize: '13px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                      {presenceDotColor(m.presence_state) && (
-                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: presenceDotColor(m.presence_state)!, flexShrink: 0 }} />
+              <div className="mt-2 space-y-2">
+                {visibleMembers.map(m => {
+                  const recentActivity = recentActivityByMemberId.get(m.id)
+                  return (
+                    <div key={m.id}>
+                      <div className="flex items-center justify-between">
+                        <span style={{ fontSize: '14px', color: '#1f2937', fontWeight: m.id === activeMemberId ? 500 : 400 }}>
+                          {m.display_name}
+                        </span>
+                        <span style={{ fontSize: '13px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                          {presenceDotColor(m.presence_state) && (
+                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: presenceDotColor(m.presence_state)!, flexShrink: 0 }} />
+                          )}
+                          {formatPresence(m)}
+                          {m.presence_state !== 'tbd' && (
+                            <>{' '}· {formatTime(m.presence_updated_at || m.created_at)}</>
+                          )}
+                        </span>
+                      </div>
+                      {recentActivity && (
+                        <p style={{ fontSize: '12px', color: '#9CA3AF', marginTop: '2px', marginLeft: '0' }}>
+                          {recentActivity.emoji && <span>{recentActivity.emoji} </span>}
+                          <span>{recentActivity.label}</span>
+                        </p>
                       )}
-                      {formatPresence(m)}
-                      {m.presence_state !== 'tbd' && (
-                        <>{' '}· {formatTime(m.presence_updated_at || m.created_at)}</>
-                      )}
-                    </span>
-                  </div>
-                ))}
+                    </div>
+                  )
+                })}
               </div>
             </section>
           )
