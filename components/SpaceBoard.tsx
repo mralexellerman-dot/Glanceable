@@ -96,6 +96,11 @@ function clockTime(dateStr: string): string {
   return new Date(dateStr).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
+function formatExactTime(ts: string): string {
+  const d = new Date(ts)
+  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}
+
 // Parse natural-language scheduling phrases.
 // Returns { label, starts_at } if matched, null otherwise.
 function parseScheduled(text: string): { label: string; starts_at: string } | null {
@@ -490,7 +495,7 @@ interface SpaceBoardProps {
 export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const router = useRouter()
 
-  const [activeMemberId] = useState(memberId)
+  const activeMemberId = memberId
 
   const [space,            setSpace]            = useState<Space | null>(null)
   const [members,          setMembers]          = useState<Member[]>([])
@@ -714,6 +719,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   }
 
   function tapIn(emoji: string, label: string) {
+    console.log('[tapIn] called with:', { emoji, label })
     logEvent(emoji, label)
     recentTaps.current.set(label, Date.now())
     setTapInFeedback(label)
@@ -740,8 +746,9 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         ))
         // Insert succeeded — fetchAll will update serverEvents; dedup removes optimistic seamlessly
         fetchAll()
-      } catch {
+      } catch (err) {
         // Insert failed — discard optimistic events immediately
+        console.error('[logEvent] bulk insert failed:', err)
         setOptimisticEvents(prev => prev.filter(e => !newOptimistic.some(o => o.id === e.id)))
       }
     } else {
@@ -758,7 +765,8 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
           ...(note?.trim() ? { note: note.trim() } : {}),
         })
         fetchAll()
-      } catch {
+      } catch (err) {
+        console.error('[logEvent] single insert failed:', err)
         setOptimisticEvents(prev => prev.filter(e => e.id !== optEvent.id))
       }
     }
@@ -792,7 +800,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
       setPresence('home')
     } else if (action === 'on_the_way') {
       setPresence('out')
-      logEvent('', 'On the way')
+      logEvent('', `On the way · ${label}`)
     } else {
       setPresence('out')
       logEvent('', `Running late · ${label}`)
@@ -871,8 +879,14 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const earlierEvents = combinedEvents.filter(e => new Date(e.created_at) < cutoff12h)
   const earlierGroups = groupByDay(earlierEvents)
 
-  // All members, sorted most recently active first
-  const sortedMembers = [...members].sort((a, b) => presenceAgeMs(a) - presenceAgeMs(b))
+  // All members, sorted by presence state (here first, away after), then by recency within each group
+  const sortedMembers = [...members].sort((a, b) => {
+    const stateOrder = { 'home': 0, 'away': 1, 'dnd': 2, 'tbd': 3 }
+    const aOrder = stateOrder[a.presence_state as keyof typeof stateOrder] ?? 99
+    const bOrder = stateOrder[b.presence_state as keyof typeof stateOrder] ?? 99
+    if (aOrder !== bOrder) return aOrder - bOrder
+    return presenceAgeMs(a) - presenceAgeMs(b)
+  })
 
   const summary = ambientSummary(combinedEvents, members, upcoming, space?.name ?? '', weather)
   const isOwner = members.find(m => m.id === activeMemberId)?.role === 'owner'
@@ -1131,12 +1145,6 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                       {chip.emoji ? `${chip.emoji} ${chip.label}` : chip.label}
                     </button>
                   ))}
-                  <button
-                    onClick={handleWhatHappening}
-                    style={{ fontSize: '13px', color: '#9CA3AF', border: 'none', background: 'transparent', cursor: 'pointer', padding: '4px 0' }}
-                  >
-                    more…
-                  </button>
                 </div>
               )}
               {!tapInFeedback && (
@@ -1145,9 +1153,12 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                   onSubmit={async e => {
                     e.preventDefault()
                     const text = customText.trim()
+                    console.log('[custom input] submitted:', { raw: customText, trimmed: text })
                     if (!text) return
                     const scheduled = parseScheduled(text)
+                    console.log('[custom input] parseScheduled result:', scheduled)
                     if (scheduled) {
+                      console.log('[custom input] entering scheduled branch')
                       try {
                         const { error } = await supabase
                           .from('upcoming')
@@ -1163,18 +1174,21 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                         tapInTimer.current = setTimeout(() => setTapInFeedback(null), 2000)
                       } catch (err) {
                         const error = err as any
-                        console.error('Upcoming insert failed', {
+                        console.error('[custom input] Upcoming insert failed:', {
                           message: error?.message,
                           details: error?.details,
                           hint: error?.hint,
                           code: error?.code,
                         })
+                        console.log('[custom input] Falling back to plain log entry')
+                        tapIn('', text)
                       }
 
                       setCustomText('')
                       return
                     }
 
+                    console.log('[custom input] entering plain-log branch, calling tapIn')
                     tapIn('', text)
                     setCustomText('')
                   }}
@@ -1201,49 +1215,9 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                     disabled={!customText.trim()}
                     style={{ fontSize: '13px', color: customText.trim() ? '#1A1A18' : '#9CA3AF', border: 'none', background: 'transparent', cursor: customText.trim() ? 'pointer' : 'default', padding: '0 4px' }}
                   >
-                    Log
+                    Send
                   </button>
                 </form>
-              )}
-              {logExpanded && (
-                <div className="mt-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <p style={{ fontSize: '14px', color: '#4A453F' }}>Tap in something…</p>
-                    <button
-                      onClick={() => { setLogExpanded(false); setSuggestionsExpanded(false) }}
-                      className="p-1.5 rounded hover:bg-gray-100 hover:text-gray-900 transition-colors"
-                      style={{ color: '#6B7280', fontSize: '13px', border: 'none', background: 'none', cursor: 'pointer', lineHeight: 1 }}
-                    >✕</button>
-                  </div>
-                  <div className="flex flex-col gap-0">
-                    {(suggestionsExpanded ? suggestions : suggestions.slice(0, 5)).map((a, i) => (
-                      <button
-                        key={a.label}
-                        onClick={() => logEvent(a.emoji, a.label)}
-                        style={{
-                          display:    'block',
-                          width:      '100%',
-                          textAlign:  'left',
-                          padding:    '7px 0',
-                          fontSize:   '14px',
-                          color:      i === 0 ? '#2C2924' : '#4A453F',
-                          fontWeight: i === 0 ? 450 : 400,
-                          border:     'none',
-                          background: 'transparent',
-                          cursor:     'pointer',
-                        }}
-                      >
-                        {a.emoji ? `${a.emoji} ${a.label}` : a.label}
-                      </button>
-                    ))}
-                    <button
-                      onClick={() => setSuggestionsExpanded(v => !v)}
-                      style={{ display: 'block', textAlign: 'left', padding: '7px 0', fontSize: '13px', color: '#6E6A64', border: 'none', background: 'transparent', cursor: 'pointer' }}
-                    >
-                      {suggestionsExpanded ? 'show less' : 'show more'}
-                    </button>
-                  </div>
-                </div>
               )}
             </div>
           </section>
@@ -1253,61 +1227,17 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         {!isSearching && upcomingItems.length > 0 && spaceStage === 'alive' && (
           <section className="px-5 pb-5 lg:pb-4">
             <Label>Upcoming</Label>
-            <div className="mt-1">
-              {upcomingItems.map(u => {
-                const expanded = expandedUpcomingId === u.id
-                return (
-                  <div key={u.id}>
-                    <button
-                      onClick={() => setExpandedUpcomingId(expanded ? null : u.id)}
-                      style={{
-                        display:    'flex',
-                        width:      '100%',
-                        alignItems: 'baseline',
-                        justifyContent: 'space-between',
-                        padding:    '6px 0',
-                        background: 'none',
-                        border:     'none',
-                        cursor:     'pointer',
-                        textAlign:  'left',
-                      }}
-                    >
-                      <span style={{ fontSize: '14px', color: expanded ? '#1f2937' : '#5A554E', fontWeight: expanded ? 500 : 400 }}>
-                        {u.label}
-                      </span>
-                      <span style={{ fontSize: '12px', color: '#6E6A64', tabularNums: true } as React.CSSProperties}>
-                        {formatCountdown(u.starts_at, nowMs)}
-                      </span>
-                    </button>
-                    {expanded && (
-                      <div className="flex gap-1.5 pb-2">
-                        {[
-                          { label: "I'm here",     action: 'here'         as const },
-                          { label: 'On the way',   action: 'on_the_way'   as const },
-                          { label: 'Running late', action: 'running_late' as const },
-                        ].map(opt => (
-                          <button
-                            key={opt.action}
-                            onClick={() => handleUpcomingAction(opt.action, u.label)}
-                            style={{
-                              padding:      '4px 11px',
-                              borderRadius: '999px',
-                              background:   '#F4F1EC',
-                              fontSize:     '12px',
-                              color:        '#3A3630',
-                              border:       'none',
-                              cursor:       'pointer',
-                              whiteSpace:   'nowrap',
-                            }}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
+            <div className="mt-1 space-y-1">
+              {upcomingItems.map(u => (
+                <div key={u.id} style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '6px 0' }}>
+                  <span style={{ fontSize: '14px', color: '#5A554E' }}>
+                    {u.label}
+                  </span>
+                  <span style={{ fontSize: '12px', color: '#6E6A64', tabularNums: true } as React.CSSProperties}>
+                    {formatCountdown(u.starts_at, nowMs)}
+                  </span>
+                </div>
+              ))}
             </div>
           </section>
         )}
@@ -1418,19 +1348,11 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
             >
               {copied ? 'Copied!' : 'Copy invite link'}
             </button>
-            <a
-              href={`/widget/${spaceId}`}
-              className="text-xs"
-              style={{ color: '#D0CCCA', textDecoration: 'none' }}
-            >
-              Widget
-            </a>
             {isOwner && (
               <button onClick={regenerateInvite} className="text-xs" style={{ color: '#D0CCCA', border: 'none', background: 'none', cursor: 'pointer' }}>
                 Reset link
               </button>
             )}
-            {/* Nudges toggle hidden until feature is defined */}
             <button onClick={leaveSpace} className="text-xs ml-auto" style={{ color: '#D0CCCA', border: 'none', background: 'none', cursor: 'pointer' }}>
               Leave space
             </button>
