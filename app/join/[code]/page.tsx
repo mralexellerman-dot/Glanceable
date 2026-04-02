@@ -4,11 +4,11 @@ import { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { getBrowserId } from '@/lib/memberships'
-import type { Space, Event } from '@/lib/types'
+import type { Space, Event, Member } from '@/lib/types'
 
 function relativeTime(dateStr: string): string {
   const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
-  if (diff < 60) return `${diff}s`
+  if (diff < 60) return `just now`
   if (diff < 3600) return `${Math.floor(diff / 60)}m`
   if (diff < 86400) return `${Math.floor(diff / 3600)}h`
   return `${Math.floor(diff / 86400)}d`
@@ -20,6 +20,7 @@ export default function JoinPage() {
   const code = (params.code as string).toUpperCase()
 
   const [space, setSpace] = useState<Space | null>(null)
+  const [members, setMembers] = useState<Member[]>([])
   const [recentEvents, setRecentEvents] = useState<Event[]>([])
   const [memberName, setMemberName] = useState('')
   const [loading, setLoading] = useState(true)
@@ -58,13 +59,23 @@ export default function JoinPage() {
 
       setSpace(data)
 
-      const { data: events } = await supabase
-        .from('events')
-        .select('*')
-        .eq('space_id', data.id)
-        .order('created_at', { ascending: false })
-        .limit(3)
-      setRecentEvents(events ?? [])
+      // Fetch members and events to build preview
+      const [{ data: membersData }, { data: eventsData }] = await Promise.all([
+        supabase
+          .from('members')
+          .select('*')
+          .eq('space_id', data.id)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('events')
+          .select('*')
+          .eq('space_id', data.id)
+          .order('created_at', { ascending: false })
+          .limit(50),
+      ])
+
+      setMembers(membersData ?? [])
+      setRecentEvents(eventsData ?? [])
       setLoading(false)
     }
     load()
@@ -142,19 +153,75 @@ export default function JoinPage() {
           <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>
             Join {space.name}
           </h1>
-          {recentEvents.length > 0 && (
-            <div className="space-y-2">
-              {recentEvents.map(e => (
-                <div key={e.id} className="flex items-center gap-2 text-sm">
-                  <span>{e.emoji}</span>
-                  <span style={{ color: 'var(--text-secondary)' }}>{e.label}</span>
-                  <span className="ml-auto tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                    {relativeTime(e.created_at)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+          {(() => {
+            // Build map of latest activity per member (within 30 min)
+            const thirtyMinAgo = Date.now() - 30 * 60_000
+            const latestActivityByMemberId = new Map<string, Event>()
+            for (const event of recentEvents) {
+              if (!event.member_id) continue
+              const eventMs = new Date(event.created_at).getTime()
+              if (eventMs < thirtyMinAgo) continue
+              const existing = latestActivityByMemberId.get(event.member_id)
+              if (
+                !existing ||
+                eventMs > new Date(existing.created_at).getTime()
+              ) {
+                latestActivityByMemberId.set(event.member_id, event)
+              }
+            }
+
+            // Show up to 3 members, prefer those with recent activity
+            const membersWithActivity = members
+              .filter(m => latestActivityByMemberId.has(m.id))
+              .slice(0, 3)
+            const previewMembers =
+              membersWithActivity.length > 0
+                ? membersWithActivity
+                : members.slice(0, 3)
+
+            if (previewMembers.length === 0) {
+              return (
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  Tap in to see what's happening.
+                </p>
+              )
+            }
+
+            return (
+              <div className="space-y-2">
+                {previewMembers.map(m => {
+                  const activity = latestActivityByMemberId.get(m.id)
+                  return (
+                    <div key={m.id}>
+                      <p style={{ color: 'var(--text)', fontSize: '14px' }}>
+                        {m.display_name}
+                      </p>
+                      {activity && (
+                        <p
+                          style={{
+                            color: 'var(--text-secondary)',
+                            fontSize: '13px',
+                            marginTop: '2px',
+                          }}
+                        >
+                          {activity.emoji && <span>{activity.emoji} </span>}
+                          <span>{activity.label}</span>
+                          <span
+                            style={{
+                              marginLeft: '6px',
+                              color: 'var(--text-muted)',
+                            }}
+                          >
+                            · {relativeTime(activity.created_at)}
+                          </span>
+                        </p>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })()}
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Tap in to see what's happening.</p>
         </div>
 
