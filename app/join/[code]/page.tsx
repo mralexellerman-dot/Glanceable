@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { getBrowserId } from '@/lib/memberships'
+import { buildRecentActivityMap } from '@/lib/activity'
 import type { Space, Event, Member } from '@/lib/types'
 
 function relativeTime(dateStr: string): string {
@@ -154,30 +155,17 @@ export default function JoinPage() {
             Join {space.name}
           </h1>
           {(() => {
-            // Build map of latest activity per member (within 30 min)
-            const thirtyMinAgo = Date.now() - 30 * 60_000
-            const latestActivityByMemberId = new Map<string, Event>()
-            for (const event of recentEvents) {
-              if (!event.member_id) continue
-              const eventMs = new Date(event.created_at).getTime()
-              if (eventMs < thirtyMinAgo) continue
-              const existing = latestActivityByMemberId.get(event.member_id)
-              if (
-                !existing ||
-                eventMs > new Date(existing.created_at).getTime()
-              ) {
-                latestActivityByMemberId.set(event.member_id, event)
-              }
-            }
+            // Use shared activity map builder (30 min window)
+            const latestActivityByMemberId = buildRecentActivityMap(recentEvents)
 
-            // Show up to 3 members, prefer those with recent activity
+            // Show up to 2 members, prefer those with recent activity
             const membersWithActivity = members
               .filter(m => latestActivityByMemberId.has(m.id))
-              .slice(0, 3)
+              .slice(0, 2)
             const previewMembers =
               membersWithActivity.length > 0
                 ? membersWithActivity
-                : members.slice(0, 3)
+                : members.slice(0, 2)
 
             if (previewMembers.length === 0) {
               return (
@@ -188,19 +176,19 @@ export default function JoinPage() {
             }
 
             return (
-              <div className="space-y-2">
+              <div style={{ space: '2' }}>
                 {previewMembers.map(m => {
                   const activity = latestActivityByMemberId.get(m.id)
                   return (
-                    <div key={m.id}>
-                      <p style={{ color: 'var(--text)', fontSize: '14px' }}>
+                    <div key={m.id} style={{ marginBottom: '8px' }}>
+                      <p style={{ color: 'var(--text)', fontSize: '14px', fontWeight: 400 }}>
                         {m.display_name}
                       </p>
                       {activity && (
                         <p
                           style={{
                             color: 'var(--text-secondary)',
-                            fontSize: '13px',
+                            fontSize: '12px',
                             marginTop: '2px',
                           }}
                         >

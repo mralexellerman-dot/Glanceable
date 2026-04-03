@@ -11,6 +11,7 @@ import { getWeatherCondition } from '@/lib/weather'
 import type { WeatherCondition } from '@/lib/weather'
 import { onNetworkChange } from '@/lib/network'
 import type { NetworkType } from '@/lib/network'
+import { buildRecentActivityMap } from '@/lib/activity'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -880,17 +881,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const earlierGroups = groupByDay(earlierEvents)
 
   // Build map of latest recent activity per member (within 30 min)
-  const recentActivityByMemberId = new Map<string, Event>()
-  const thirtyMinAgo = nowMs - 30 * 60_000
-  for (const event of combinedEvents) {
-    if (!event.member_id) continue
-    const eventMs = new Date(event.created_at).getTime()
-    if (eventMs < thirtyMinAgo) continue
-    const existing = recentActivityByMemberId.get(event.member_id)
-    if (!existing || eventMs > new Date(existing.created_at).getTime()) {
-      recentActivityByMemberId.set(event.member_id, event)
-    }
-  }
+  const recentActivityByMemberId = buildRecentActivityMap(combinedEvents, nowMs)
 
   // All members, sorted by presence state (here first, away after), then by recency within each group
   const sortedMembers = [...members].sort((a, b) => {
