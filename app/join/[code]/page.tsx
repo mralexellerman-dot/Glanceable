@@ -28,6 +28,7 @@ export default function JoinPage() {
   const [joining, setJoining] = useState(false)
   const [error, setError] = useState('')
   const [notFound, setNotFound] = useState(false)
+  const [duplicateCandidate, setDuplicateCandidate] = useState<Member | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -102,12 +103,44 @@ export default function JoinPage() {
       return
     }
 
+    // Name-based duplicate guard (case-insensitive)
+    const normalized = memberName.trim().toLowerCase()
+    const nameMatch = members.find(m => m.display_name.trim().toLowerCase() === normalized)
+    if (nameMatch) {
+      setDuplicateCandidate(nameMatch)
+      setJoining(false)
+      return
+    }
+
+    await insertNewMember(space.id, browserId, memberName.trim())
+  }
+
+  async function handleRejoin() {
+    if (!space || !duplicateCandidate) return
+    setJoining(true)
+    const browserId = getBrowserId()
+    await supabase
+      .from('members')
+      .update({ browser_id: browserId })
+      .eq('id', duplicateCandidate.id)
+    router.push(`/space/${space.id}`)
+  }
+
+  async function handleJoinAsNew() {
+    if (!space) return
+    setJoining(true)
+    setDuplicateCandidate(null)
+    const browserId = getBrowserId()
+    await insertNewMember(space.id, browserId, memberName.trim())
+  }
+
+  async function insertNewMember(spaceId: string, browserId: string, name: string) {
     const { error: err } = await supabase
       .from('members')
       .insert({
-        space_id: space.id,
+        space_id: spaceId,
         browser_id: browserId,
-        display_name: memberName.trim(),
+        display_name: name,
         presence_state: 'tbd',
       })
 
@@ -118,7 +151,7 @@ export default function JoinPage() {
       return
     }
 
-    router.push(`/space/${space.id}`)
+    router.push(`/space/${space!.id}`)
   }
 
   if (loading) {
@@ -229,14 +262,38 @@ export default function JoinPage() {
             onKeyDown={e => e.key === 'Enter' && memberName.trim() && handleJoin()}
           />
           {error && <p className="text-sm text-red-500">{error}</p>}
-          <button
-            onClick={handleJoin}
-            disabled={!memberName.trim() || joining}
-            className="w-full py-3.5 rounded-xl text-sm font-medium text-white transition-opacity disabled:opacity-40 active:opacity-80"
-            style={{ background: '#1A1A18' }}
-          >
-            {joining ? 'Joining…' : `Join ${space.name}`}
-          </button>
+          {duplicateCandidate ? (
+            <div className="space-y-2">
+              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                <strong>{duplicateCandidate.display_name}</strong> already exists in this space. Is that you?
+              </p>
+              <button
+                onClick={handleRejoin}
+                disabled={joining}
+                className="w-full py-3.5 rounded-xl text-sm font-medium text-white transition-opacity disabled:opacity-40 active:opacity-80"
+                style={{ background: '#1A1A18' }}
+              >
+                {joining ? 'Joining…' : `Yes, rejoin as ${duplicateCandidate.display_name}`}
+              </button>
+              <button
+                onClick={handleJoinAsNew}
+                disabled={joining}
+                className="w-full py-3 rounded-xl text-sm font-medium transition-opacity disabled:opacity-40 active:opacity-80"
+                style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)', background: 'var(--surface)' }}
+              >
+                No, join as a new member
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleJoin}
+              disabled={!memberName.trim() || joining}
+              className="w-full py-3.5 rounded-xl text-sm font-medium text-white transition-opacity disabled:opacity-40 active:opacity-80"
+              style={{ background: '#1A1A18' }}
+            >
+              {joining ? 'Joining…' : `Join ${space.name}`}
+            </button>
+          )}
         </div>
       </div>
     </main>

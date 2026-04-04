@@ -572,7 +572,10 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         .limit(5),
     ])
     if (spaceRes.data)   setSpace(spaceRes.data)
-    if (membersRes.data) setMembers(membersRes.data)
+    if (membersRes.data) {
+      setMembers(membersRes.data)
+      console.log('[fetchAll] member_id:', memberId, '| members fetched:', membersRes.data.length, '| ids:', membersRes.data.map((m: Member) => m.id))
+    }
     if (eventsRes.data)  setServerEvents(eventsRes.data as Event[])
     if (upcomingRes.data) setUpcoming(upcomingRes.data)
     setLoading(false)
@@ -730,7 +733,12 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
   async function logEvent(emoji: string, label: string, note?: string) {
     const bulk = parseBulk(label)
-    const mid  = activeMemberId ?? null
+    const mid  = activeMemberId || null
+    console.log('[logEvent] member_id used for insert:', mid)
+    if (!mid) {
+      console.error('[logEvent] blocked: no member_id — cannot insert event')
+      return
+    }
     const now  = Date.now()
 
     if (bulk.length >= 2) {
@@ -782,6 +790,17 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         : m
     setMembers(prev => prev.map(patch))
     await supabase.from('members').update({ presence_state: state, presence_updated_at: now }).eq('id', activeMemberId)
+  }
+
+  function handleJoinState(label: string) {
+    if (!activeMemberId) return
+    const now = new Date().toISOString()
+    const patch = (m: Member) =>
+      m.id === activeMemberId
+        ? { ...m, presence_state: label as Member['presence_state'], presence_updated_at: now }
+        : m
+    setMembers(prev => prev.map(patch))
+    supabase.from('members').update({ presence_state: label, presence_updated_at: now }).eq('id', activeMemberId)
   }
 
   // Cross-space echo: update presence on all member records belonging to this user
@@ -1052,11 +1071,8 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
         {/* ── CURRENT ──────────────────────────────────────────────────────── */}
         {(() => {
-          let visibleMembers = sortedMembers.filter(m => presenceAgeHours(m) < 10)
-          if (spaceStage === 'empty' && activeMemberId) {
-            const me = sortedMembers.find(m => m.id === activeMemberId)
-            if (me && !visibleMembers.some(v => v.id === me.id)) visibleMembers = [me, ...visibleMembers]
-          }
+          const visibleMembers = sortedMembers
+          console.log('[CURRENT] member_id:', activeMemberId, '| members fetched:', members.length, '| member_ids in CURRENT:', visibleMembers.map(m => m.id))
           if (visibleMembers.length === 0) return null
           return (
             <section className="px-5 pb-5 lg:pb-4">
@@ -1070,7 +1086,10 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                         <span style={{ fontSize: '14px', color: '#1f2937', fontWeight: m.id === activeMemberId ? 500 : 400 }}>
                           {m.display_name}
                         </span>
-                        <span style={{ fontSize: '13px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span
+                          onClick={() => handleJoinState(m.presence_state)}
+                          style={{ fontSize: '13px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '5px', cursor: activeMemberId ? 'pointer' : 'default' }}
+                        >
                           {presenceDotColor(m.presence_state) && (
                             <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: presenceDotColor(m.presence_state)!, flexShrink: 0 }} />
                           )}
@@ -1162,6 +1181,29 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                   ))}
                 </div>
               )}
+              {!tapInFeedback && (() => {
+                const quickEmojis = [
+                  { icon: '🍽', label: 'Eating' },
+                  { icon: '🚗', label: 'On the way' },
+                  { icon: '🏠', label: 'Home' },
+                  { icon: '😴', label: 'Sleeping' },
+                  { icon: '😌', label: 'Relaxing' },
+                ]
+                return (
+                  <div style={{ display: 'flex', gap: '12px', marginTop: '10px', marginBottom: '2px' }}>
+                    {quickEmojis.map(e => (
+                      <button
+                        key={e.icon}
+                        type="button"
+                        onClick={() => { setCustomText(e.label); customInputRef.current?.focus() }}
+                        style={{ fontSize: '18px', border: 'none', background: 'none', cursor: 'pointer', padding: '0', lineHeight: 1 }}
+                      >
+                        {e.icon}
+                      </button>
+                    ))}
+                  </div>
+                )
+              })()}
               {!tapInFeedback && (
                 <form
                   style={{ marginTop: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}
@@ -1244,7 +1286,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
             <Label>Upcoming</Label>
             <div className="mt-1 space-y-1">
               {upcomingItems.map(u => (
-                <div key={u.id} style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '6px 0' }}>
+                <div key={u.id} onClick={() => handleJoinState(u.label)} style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '6px 0', cursor: activeMemberId ? 'pointer' : 'default' }}>
                   <span style={{ fontSize: '14px', color: '#5A554E' }}>
                     {u.label}
                   </span>
