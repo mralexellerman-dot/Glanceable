@@ -209,7 +209,7 @@ export default function JoinPage() {
             }
 
             return (
-              <div style={{ space: '2' }}>
+              <div className="space-y-2">
                 {previewMembers.map(m => {
                   const activity = latestActivityByMemberId.get(m.id)
                   return (
