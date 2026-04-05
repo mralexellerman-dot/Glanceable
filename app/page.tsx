@@ -44,13 +44,13 @@ export default function Home() {
       </section>
 
       {/* ── Proof / screenshot ────────────────────────────────────────────── */}
-      <section className="max-w-xs mx-auto px-6 pb-20 text-center">
+      <section className="mx-auto pb-16 text-center" style={{ maxWidth: '480px', padding: '0 16px' }}>
         <img
           src="/IMG_8777.jpeg"
           alt="Glanceable in use — Current, Upcoming, and Today"
-          className="w-full rounded-2xl shadow-md"
+          className="w-full rounded-2xl shadow-lg"
         />
-        <p className="mt-4 text-base text-gray-400">No texts. Just this.</p>
+        <p className="mt-3 text-base text-gray-400">No texts. Just this.</p>
       </section>
 
       {/* ── Problem ───────────────────────────────────────────────────────── */}
