@@ -962,8 +962,16 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   // Active presence state for highlighting the current chip
   const myPresenceState = members.find(m => m.id === activeMemberId)?.presence_state ?? ''
 
-  // Upcoming: within next 4h, max 2 shown
-  const upcomingItems = upcoming.slice(0, 2)
+  // Upcoming: dedupe by normalized label + starts_at, then take first 2
+  const upcomingItems = (() => {
+    const seen = new Set<string>()
+    const deduped: typeof upcoming = []
+    for (const u of upcoming) {
+      const key = `${u.label.trim().toLowerCase()}__${u.starts_at}`
+      if (!seen.has(key)) { seen.add(key); deduped.push(u) }
+    }
+    return deduped.slice(0, 2)
+  })()
 
   // Up to 3 most recent events attributed to a member (for name tap recall)
   function recentEventsFor(mid: string): Event[] {
