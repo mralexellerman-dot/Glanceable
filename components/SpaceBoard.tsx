@@ -891,16 +891,19 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
       starts_at: u.starts_at,
     }))
 
+  // Build map of latest recent activity per member (within 30 min) — used by CURRENT
+  const recentActivityByMemberId = buildRecentActivityMap(combinedEvents, nowMs)
+
+  // IDs currently shown as the active state in CURRENT — exclude from TODAY to avoid duplication
+  const activeInCurrentIds = new Set([...recentActivityByMemberId.values()].map(e => e.id))
+
   const todayEvents   = combinedEvents.filter(e => {
     const isInPast = new Date(e.created_at) >= cutoff12h
     const isNotFuture = !e.starts_at || new Date(e.starts_at).getTime() <= nowMs
-    return isInPast && isNotFuture
+    return isInPast && isNotFuture && !activeInCurrentIds.has(e.id)
   })
   const earlierEvents = combinedEvents.filter(e => new Date(e.created_at) < cutoff12h)
   const earlierGroups = groupByDay(earlierEvents)
-
-  // Build map of latest recent activity per member (within 30 min)
-  const recentActivityByMemberId = buildRecentActivityMap(combinedEvents, nowMs)
 
   // All members, sorted by presence state (here first, away after), then by recency within each group
   const sortedMembers = [...members].sort((a, b) => {
@@ -1086,14 +1089,21 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                         <span style={{ fontSize: '14px', color: '#1f2937', fontWeight: m.id === activeMemberId ? 500 : 400 }}>
                           {m.display_name}
                         </span>
-                        <span
-                          onClick={() => handleJoinState(m.presence_state)}
-                          style={{ fontSize: '13px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '5px', cursor: activeMemberId ? 'pointer' : 'default' }}
-                        >
+                        <span style={{ fontSize: '13px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '5px' }}>
                           {presenceDotColor(m.presence_state) && (
                             <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: presenceDotColor(m.presence_state)!, flexShrink: 0 }} />
                           )}
-                          {formatPresence(m)}
+                          {activeMemberId && m.id !== activeMemberId ? (
+                            <button
+                              onClick={() => handleJoinState(m.presence_state)}
+                              style={{ color: 'inherit', font: 'inherit', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+                              className="opacity-80 hover:opacity-100 active:scale-[0.98] transition"
+                            >
+                              {formatPresence(m)}
+                            </button>
+                          ) : (
+                            <span>{formatPresence(m)}</span>
+                          )}
                           {m.presence_state !== 'tbd' && (
                             <>{' '}· {formatTime(m.presence_updated_at || m.created_at)}</>
                           )}
