@@ -43,38 +43,14 @@ export default function Home() {
         </p>
       </section>
 
-      {/* ── Proof / product state ─────────────────────────────────────────── */}
-      <section className="max-w-sm mx-auto px-6 pb-20">
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 text-left">
-          <div className="mb-4 pb-3 border-b border-gray-100">
-            <p className="text-sm font-semibold text-gray-900">Home</p>
-          </div>
-
-          <div className="mb-1">
-            <p className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">Current</p>
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-900">Alex — On the way</span>
-                <span className="text-gray-400">8m ago</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-900">Mom — Lunch</span>
-                <span className="text-gray-400">just now</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-900">Dad — Watching TV</span>
-                <span className="text-gray-400">22m ago</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-4 pt-3 border-t border-gray-100">
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-700">Lunch</span>
-              <span className="text-gray-500">12:30 PM</span>
-            </div>
-          </div>
-        </div>
+      {/* ── Proof / screenshot ────────────────────────────────────────────── */}
+      <section className="max-w-xs mx-auto px-6 pb-20 text-center">
+        <img
+          src="/IMG_8777.jpeg"
+          alt="Glanceable in use — Current, Upcoming, and Today"
+          className="w-full rounded-2xl shadow-md"
+        />
+        <p className="mt-4 text-base text-gray-400">No texts. Just this.</p>
       </section>
 
       {/* ── Problem ───────────────────────────────────────────────────────── */}
