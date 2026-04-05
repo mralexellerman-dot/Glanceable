@@ -11,7 +11,7 @@ import { getWeatherCondition } from '@/lib/weather'
 import type { WeatherCondition } from '@/lib/weather'
 import { onNetworkChange } from '@/lib/network'
 import type { NetworkType } from '@/lib/network'
-import { buildRecentActivityMap } from '@/lib/activity'
+
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -891,11 +891,17 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
       starts_at: u.starts_at,
     }))
 
-  // Build map of latest recent activity per member (within 30 min) — used by CURRENT
-  const recentActivityByMemberId = buildRecentActivityMap(combinedEvents, nowMs)
+  // Latest event per member with NO time cutoff — persists in CURRENT until replaced by a newer event
+  // combinedEvents is ordered newest-first, so the first event per member_id is their active state
+  const latestActivityByMemberId = new Map<string, Event>()
+  for (const e of combinedEvents) {
+    if (e.member_id && !latestActivityByMemberId.has(e.member_id)) {
+      latestActivityByMemberId.set(e.member_id, e)
+    }
+  }
 
   // IDs currently shown as the active state in CURRENT — exclude from TODAY to avoid duplication
-  const activeInCurrentIds = new Set([...recentActivityByMemberId.values()].map(e => e.id))
+  const activeInCurrentIds = new Set([...latestActivityByMemberId.values()].map(e => e.id))
 
   const todayEvents   = combinedEvents.filter(e => {
     const isInPast = new Date(e.created_at) >= cutoff12h
@@ -1082,7 +1088,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
               <Label>Current</Label>
               <div className="mt-2 space-y-2">
                 {visibleMembers.map(m => {
-                  const recentActivity = recentActivityByMemberId.get(m.id)
+                  const recentActivity = latestActivityByMemberId.get(m.id)
                   return (
                     <div key={m.id}>
                       <div className="flex items-center justify-between">
@@ -1226,28 +1232,25 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                     console.log('[custom input] parseScheduled result:', scheduled)
                     if (scheduled) {
                       console.log('[custom input] entering scheduled branch')
+                      const payload = { space_id: spaceId, label: scheduled.label, starts_at: scheduled.starts_at }
+                      console.log('[custom input] upcoming insert payload:', payload)
                       try {
-                        const { error } = await supabase
-                          .from('upcoming')
-                          .insert({ space_id: spaceId, label: scheduled.label, starts_at: scheduled.starts_at })
+                        const { error } = await supabase.from('upcoming').insert(payload)
                         if (error) throw error
-
-                        setUpcoming(prev =>
-                          [...prev, { id: `opt-${Date.now()}`, space_id: spaceId, label: scheduled.label, starts_at: scheduled.starts_at, created_at: new Date().toISOString() }]
-                            .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())
-                        )
+                        console.log('[custom input] upcoming insert success')
+                        // Realtime subscription on 'upcoming' fires fetchAll — no optimistic append needed
                         setTapInFeedback(`${scheduled.label} · ${clockTime(scheduled.starts_at)}`)
                         if (tapInTimer.current) clearTimeout(tapInTimer.current)
                         tapInTimer.current = setTimeout(() => setTapInFeedback(null), 2000)
                       } catch (err) {
                         const error = err as any
-                        console.error('[custom input] Upcoming insert failed:', {
+                        console.error('[custom input] upcoming insert failed:', {
                           message: error?.message,
                           details: error?.details,
                           hint: error?.hint,
                           code: error?.code,
                         })
-                        console.log('[custom input] Falling back to plain log entry')
+                        console.log('[custom input] falling back to plain log entry')
                         tapIn('', text)
                       }
 
@@ -1678,11 +1681,26 @@ function formatPresence(member: Member): string {
 
 function formatTime(ts?: string | null): string {
   if (!ts) return ''
-  const diff = Date.now() - new Date(ts).getTime()
+  const now = new Date()
+  const then = new Date(ts)
+  const diff = now.getTime() - then.getTime()
   const mins = Math.floor(diff / 60000)
   if (mins < 1) return 'just now'
   if (mins < 60) return `${mins}m`
   const hours = Math.floor(mins / 60)
   if (hours < 24) return `${hours}h`
+
+  // Previous calendar day — decide between "last night" and "yesterday"
+  const isYesterday =
+    then.getFullYear() === now.getFullYear() &&
+    then.getMonth() === now.getMonth() &&
+    now.getDate() - then.getDate() === 1
+  if (isYesterday) {
+    const isMorning = now.getHours() < 12              // before noon locally
+    const isEvening = then.getHours() >= 18            // event was 6 PM or later
+    if (isMorning && isEvening) return 'last night'
+    return 'yesterday'
+  }
+
   return ''
 }
