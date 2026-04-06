@@ -93,6 +93,23 @@ function formatCountdown(dateStr: string, now: number = Date.now()): string {
   return ct === 'now' ? 'now' : `in ${ct}`
 }
 
+// Strip baked-in time text from labels entered as "Lunch in 2h" or "Dinner at 7"
+function normalizeUpcomingLabel(label: string): string {
+  return label
+    .replace(/\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i, '')
+    .replace(/\s+in\s+\d+\s*(?:m(?:in(?:utes?)?)?|h(?:rs?|ours?)?)$/i, '')
+    .trim()
+}
+
+// "in 45m" / "in 1h" for < 2h; clock time ("12:30 PM") for >= 2h
+function formatUpcomingTime(starts_at: string, nowMs: number): string {
+  const mins = Math.round((new Date(starts_at).getTime() - nowMs) / 60_000)
+  if (mins <= 0)  return 'now'
+  if (mins < 60)  return `in ${mins}m`
+  if (mins < 120) return 'in 1h'
+  return clockTime(starts_at)
+}
+
 function clockTime(dateStr: string): string {
   return new Date(dateStr).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
@@ -793,7 +810,11 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   }
 
   function handleJoinState(label: string) {
-    if (!activeMemberId) return
+    console.log('[handleJoinState] tapped label:', label, '| activeMemberId:', activeMemberId)
+    if (!activeMemberId) {
+      console.warn('[handleJoinState] no activeMemberId — skipping')
+      return
+    }
     const now = new Date().toISOString()
     const patch = (m: Member) =>
       m.id === activeMemberId
@@ -801,6 +822,10 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         : m
     setMembers(prev => prev.map(patch))
     supabase.from('members').update({ presence_state: label, presence_updated_at: now }).eq('id', activeMemberId)
+      .then(({ error }) => {
+        if (error) console.error('[handleJoinState] update failed:', error)
+        else console.log('[handleJoinState] update success — label:', label)
+      })
   }
 
   // Cross-space echo: update presence on all member records belonging to this user
@@ -1097,6 +1122,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
               <div className="mt-2 space-y-2">
                 {visibleMembers.map(m => {
                   const recentActivity = latestActivityByMemberId.get(m.id)
+                  const canJoinActivity = !!activeMemberId && m.id !== activeMemberId && !!recentActivity
                   return (
                     <div key={m.id}>
                       <div className="flex items-center justify-between">
@@ -1124,7 +1150,11 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                         </span>
                       </div>
                       {recentActivity && (
-                        <p style={{ fontSize: '12px', color: '#9CA3AF', marginTop: '2px', marginLeft: '0' }}>
+                        <p
+                          onClick={canJoinActivity ? () => handleJoinState(recentActivity.label) : undefined}
+                          style={{ fontSize: '12px', color: '#9CA3AF', marginTop: '2px', marginLeft: '0', cursor: canJoinActivity ? 'pointer' : 'default' }}
+                          className={canJoinActivity ? 'active:scale-[0.98] transition-transform' : ''}
+                        >
                           {recentActivity.emoji && <span>{recentActivity.emoji} </span>}
                           <span>{recentActivity.label}</span>
                         </p>
@@ -1306,16 +1336,17 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
           <section className="px-5 pb-5 lg:pb-4">
             <Label>Upcoming</Label>
             <div className="mt-1 space-y-1">
-              {upcomingItems.map(u => (
-                <div key={u.id} onClick={() => handleJoinState(u.label)} style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '6px 0', cursor: activeMemberId ? 'pointer' : 'default' }}>
-                  <span style={{ fontSize: '14px', color: '#5A554E' }}>
-                    {u.label}
-                  </span>
-                  <span style={{ fontSize: '12px', color: '#6E6A64', tabularNums: true } as React.CSSProperties}>
-                    {formatCountdown(u.starts_at, nowMs)}
-                  </span>
-                </div>
-              ))}
+              {upcomingItems.map(u => {
+                const label = normalizeUpcomingLabel(u.label)
+                const time  = formatUpcomingTime(u.starts_at, nowMs)
+                return (
+                  <div key={u.id} onClick={() => handleJoinState(label)} style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '6px 0', cursor: activeMemberId ? 'pointer' : 'default' }}>
+                    <span style={{ fontSize: '14px', color: '#5A554E' }}>
+                      {label} — {time}
+                    </span>
+                  </div>
+                )
+              })}
             </div>
           </section>
         )}
@@ -1666,7 +1697,7 @@ function Rule({ color = '#EDE9E3' }: { color?: string }) {
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
-    <p style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#6b7280', fontWeight: 500 }}>
+    <p style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.1em', color: '#4b5563', fontWeight: 600 }}>
       {children}
     </p>
   )
