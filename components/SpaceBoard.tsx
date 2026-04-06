@@ -1151,7 +1151,12 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                       </div>
                       {recentActivity && (
                         <p
-                          onClick={canJoinActivity ? () => handleJoinState(recentActivity.label) : undefined}
+                          onClick={canJoinActivity ? () => {
+                            console.log('[tap-to-join] activity label:', recentActivity.label, '| activeMemberId:', activeMemberId)
+                            // tapIn → logEvent → inserts into events table (same path as quick log chips)
+                            // handleJoinState would write to members.presence_state which rejects non-enum values
+                            tapIn(recentActivity.emoji || '', recentActivity.label)
+                          } : undefined}
                           style={{ fontSize: '12px', color: '#9CA3AF', marginTop: '2px', marginLeft: '0', cursor: canJoinActivity ? 'pointer' : 'default' }}
                           className={canJoinActivity ? 'active:scale-[0.98] transition-transform' : ''}
                         >
