@@ -928,11 +928,44 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   // IDs currently shown as the active state in CURRENT — exclude from TODAY to avoid duplication
   const activeInCurrentIds = new Set([...latestActivityByMemberId.values()].map(e => e.id))
 
-  const todayEvents   = combinedEvents.filter(e => {
-    const isInPast = new Date(e.created_at) >= cutoff12h
-    const isNotFuture = !e.starts_at || new Date(e.starts_at).getTime() <= nowMs
-    return isInPast && isNotFuture && !activeInCurrentIds.has(e.id)
-  })
+  // Normalized labels of all active CURRENT states across all members (presence_state + latest event)
+  // Used to filter out anything still "live" from TODAY by label match
+  const activeCurrentLabels = new Set<string>()
+  for (const m of members) {
+    if (m.presence_state && m.presence_state !== 'tbd') {
+      // formatPresence produces "✓ here", "away", "busy" — also add raw state for safety
+      activeCurrentLabels.add(m.presence_state.trim().toLowerCase())
+    }
+  }
+  for (const e of latestActivityByMemberId.values()) {
+    activeCurrentLabels.add(e.label.trim().toLowerCase())
+  }
+
+  const todayEvents = (() => {
+    // Step 1: window filter + exclude active-by-ID + exclude active-by-label
+    const candidates = combinedEvents.filter(e => {
+      const isInWindow  = new Date(e.created_at) >= cutoff12h
+      const isNotFuture = !e.starts_at || new Date(e.starts_at).getTime() <= nowMs
+      if (!isInWindow || !isNotFuture) return false
+      if (activeInCurrentIds.has(e.id)) return false
+      if (activeCurrentLabels.has(e.label.trim().toLowerCase())) return false
+      return true
+    })
+
+    // Step 2: strong dedupe — per normalized label, collapse any entries within 5-min windows
+    // combinedEvents is newest-first, so iterating forward = most recent first
+    const seen = new Set<string>()
+    const deduped: typeof candidates = []
+    for (const e of candidates) {
+      const normLabel  = e.label.trim().toLowerCase()
+      const bucketMins = Math.floor(new Date(e.created_at).getTime() / (5 * 60_000))
+      const key = `${e.member_id ?? 'space'}__${normLabel}__${bucketMins}`
+      if (!seen.has(key)) { seen.add(key); deduped.push(e) }
+    }
+
+    // Step 3: cap at 7 distinct items
+    return deduped.slice(0, 7)
+  })()
   const earlierEvents = combinedEvents.filter(e => new Date(e.created_at) < cutoff12h)
   const earlierGroups = groupByDay(earlierEvents)
 
