@@ -1248,16 +1248,20 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         )}
 
 
-        {/* ── QUICK LOG ─────────────────────────────────────────────────────── */}
+        {/* ── ACTIVITY CHIPS ────────────────────────────────────────────────── */}
         {!isSearching && (
           <section ref={whRef} className="px-5 pb-5 lg:pb-4">
-            <Label>Quick log</Label>
             <div className="mt-2">
               {tapInFeedback ? (
-                <p style={{ fontSize: '14px', color: '#4A453F' }}>✓ Logged: {tapInFeedback}</p>
+                <p style={{ fontSize: '14px', color: '#4A453F' }}>✓ {tapInFeedback}</p>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
-                  {activityChips.map(chip => (
+                  {activityChips.map(chip => {
+                    const norm = chip.label.trim().toLowerCase()
+                    const memberCount = members.filter(m =>
+                      latestActivityByMemberId.get(m.id)?.label.trim().toLowerCase() === norm
+                    ).length
+                    return (
                     <button
                       key={chip.label}
                       onClick={() => tapIn(chip.emoji, chip.label)}
@@ -1274,8 +1278,10 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                       }}
                     >
                       {chip.emoji ? `${chip.emoji} ${chip.label}` : chip.label}
+                      {memberCount >= 1 && <span style={{ color: '#9CA3AF', marginLeft: '4px' }}>· {memberCount}</span>}
                     </button>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
               {!tapInFeedback && (() => {
@@ -1708,7 +1714,7 @@ function EventRow({ event, count, activeMemberId, onDelete, isFirst, tick, nowMs
         <div className="min-w-0">
           <span className="text-sm leading-snug" style={{ color: '#1f2937', fontWeight: isFirst ? 500 : 400 }}>
             {event.label}
-            {count && count > 1 && <span style={{ color: '#9CA3AF', fontWeight: 400, marginLeft: '4px' }}>×{count}</span>}
+            {count && count > 1 && <span style={{ color: '#9CA3AF', fontWeight: 400, marginLeft: '4px' }}>· {count}</span>}
           </span>
           {event.note && (
             <p className="text-xs mt-0.5 truncate" style={{ color: '#B8B4AC' }}>{event.note}</p>
