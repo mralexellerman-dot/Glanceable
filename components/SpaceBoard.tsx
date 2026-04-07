@@ -952,19 +952,24 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
       return true
     })
 
-    // Step 2: strong dedupe — per normalized label, collapse any entries within 5-min windows
-    // combinedEvents is newest-first, so iterating forward = most recent first
-    const seen = new Set<string>()
-    const deduped: typeof candidates = []
+    // Step 2: shared-moment dedupe — keyed by normalized label + 10-min bucket, ignoring member_id
+    // Treats "Dad: Sleep soon" + "Mom: Sleep soon" within 10 min as one shared moment
+    // combinedEvents is newest-first, so the first occurrence kept is always the most recent
+    const groups = new Map<string, { event: Event; count: number }>()
     for (const e of candidates) {
-      const normLabel  = e.label.trim().toLowerCase()
-      const bucketMins = Math.floor(new Date(e.created_at).getTime() / (5 * 60_000))
-      const key = `${e.member_id ?? 'space'}__${normLabel}__${bucketMins}`
-      if (!seen.has(key)) { seen.add(key); deduped.push(e) }
+      const normLabel   = e.label.trim().toLowerCase()
+      const bucket10min = Math.floor(new Date(e.created_at).getTime() / (10 * 60_000))
+      const key = `${normLabel}__${bucket10min}`
+      if (!groups.has(key)) {
+        groups.set(key, { event: e, count: 1 })
+      } else {
+        groups.get(key)!.count++
+      }
     }
+    const deduped = [...groups.values()]
 
-    // Step 3: cap at 7 distinct items
-    return deduped.slice(0, 7)
+    // Step 3: cap at 6 distinct items
+    return deduped.slice(0, 6)
   })()
   const earlierEvents = combinedEvents.filter(e => new Date(e.created_at) < cutoff12h)
   const earlierGroups = groupByDay(earlierEvents)
@@ -1411,8 +1416,8 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         {!isSearching && todayEvents.length > 0 && (
           <section className="px-5 py-4 lg:py-3">
             <Label>Today</Label>
-            {todayEvents.map((e, i) => (
-              <EventRow key={e.id} event={e} activeMemberId={activeMemberId} onDelete={deleteEvent} isFirst={i === 0} tick={tick} nowMs={nowMs} />
+            {todayEvents.map(({ event: e, count }, i) => (
+              <EventRow key={e.id} event={e} count={count} activeMemberId={activeMemberId} onDelete={deleteEvent} isFirst={i === 0} tick={tick} nowMs={nowMs} />
             ))}
           </section>
         )}
@@ -1679,6 +1684,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
 interface EventRowProps {
   event: Event
+  count?: number
   activeMemberId: string
   onDelete: (id: string) => void
   isFirst?: boolean
@@ -1686,7 +1692,7 @@ interface EventRowProps {
   nowMs?: number
 }
 
-function EventRow({ event, activeMemberId, onDelete, isFirst, tick, nowMs }: EventRowProps) {
+function EventRow({ event, count, activeMemberId, onDelete, isFirst, tick, nowMs }: EventRowProps) {
   const now = nowMs ?? 0
   const canDelete = !!activeMemberId
     && event.member_id === activeMemberId
@@ -1700,7 +1706,10 @@ function EventRow({ event, activeMemberId, onDelete, isFirst, tick, nowMs }: Eve
           <span style={{ fontSize: '15px', lineHeight: 1, flexShrink: 0 }}>{event.emoji}</span>
         )}
         <div className="min-w-0">
-          <span className="text-sm leading-snug" style={{ color: '#1f2937', fontWeight: isFirst ? 500 : 400 }}>{event.label}</span>
+          <span className="text-sm leading-snug" style={{ color: '#1f2937', fontWeight: isFirst ? 500 : 400 }}>
+            {event.label}
+            {count && count > 1 && <span style={{ color: '#9CA3AF', fontWeight: 400, marginLeft: '4px' }}>×{count}</span>}
+          </span>
           {event.note && (
             <p className="text-xs mt-0.5 truncate" style={{ color: '#B8B4AC' }}>{event.note}</p>
           )}
