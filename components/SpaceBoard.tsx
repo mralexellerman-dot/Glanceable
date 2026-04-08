@@ -555,6 +555,11 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const [hasJoinedState,      setHasJoinedState]      = useState(() => {
     try { return !!localStorage.getItem('glanceable_joined_once') } catch { return false }
   })
+  const [seenJoinOnboarding,  setSeenJoinOnboarding]  = useState(() => {
+    try { return !!localStorage.getItem('glanceable_seen_join_onboarding') } catch { return false }
+  })
+  // Label of the simulated "Partner just joined" ghost row; null = not showing
+  const [simulatedJoinLabel,  setSimulatedJoinLabel]  = useState<string | null>(null)
   const [customText,          setCustomText]          = useState('')
 
   const recentTaps = useRef<Map<string, number>>(new Map())
@@ -762,6 +767,17 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
     setTapInFeedback(label)
     if (tapInTimer.current) clearTimeout(tapInTimer.current)
     tapInTimer.current = setTimeout(() => setTapInFeedback(null), 1200)
+
+    // First-run onboarding: show a simulated "Partner just joined" ghost row for 3s
+    // Only when solo (no other real members) and onboarding not yet seen
+    if (!seenJoinOnboarding && members.filter(m => m.id !== activeMemberId).length === 0) {
+      setSimulatedJoinLabel(label)
+      setTimeout(() => {
+        setSimulatedJoinLabel(null)
+        setSeenJoinOnboarding(true)
+        try { localStorage.setItem('glanceable_seen_join_onboarding', '1') } catch {}
+      }, 3000)
+    }
   }
 
   async function logEvent(emoji: string, label: string, note?: string) {
@@ -1177,6 +1193,17 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                 <p style={{ fontSize: '11px', color: '#C4C0B8', marginTop: '2px', marginBottom: '0' }}>tap a state to join</p>
               )}
               <div className="mt-2 space-y-2">
+                {simulatedJoinLabel && (
+                  <div style={{ opacity: 0.6 }}>
+                    <div className="flex items-center justify-between">
+                      <span style={{ fontSize: '14px', color: '#1f2937', fontWeight: 400 }}>Partner</span>
+                      <span style={{ fontSize: '13px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        {simulatedJoinLabel}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '11px', color: '#C4C0B8', marginTop: '2px' }}>just joined</p>
+                  </div>
+                )}
                 {visibleMembers.map(m => {
                   const recentActivity = latestActivityByMemberId.get(m.id)
                   const canJoinActivity = !!activeMemberId && m.id !== activeMemberId && !!recentActivity
