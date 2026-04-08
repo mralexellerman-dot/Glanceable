@@ -1157,6 +1157,9 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
           return (
             <section className="px-5 pb-5 lg:pb-4">
               <Label>Current</Label>
+              {activeMemberId && visibleMembers.some(m => m.id !== activeMemberId && latestActivityByMemberId.has(m.id)) && (
+                <p style={{ fontSize: '11px', color: '#C4C0B8', marginTop: '2px', marginBottom: '0' }}>tap a state to join</p>
+              )}
               <div className="mt-2 space-y-2">
                 {visibleMembers.map(m => {
                   const recentActivity = latestActivityByMemberId.get(m.id)
@@ -1175,7 +1178,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                             <button
                               onClick={() => handleJoinState(m.presence_state)}
                               style={{ color: 'inherit', font: 'inherit', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
-                              className="opacity-80 hover:opacity-100 active:scale-[0.98] transition"
+                              className="opacity-75 hover:opacity-100 hover:underline active:scale-[0.98] transition"
                             >
                               {formatPresence(m)}
                             </button>
@@ -1196,7 +1199,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                             tapIn(recentActivity.emoji || '', recentActivity.label)
                           } : undefined}
                           style={{ fontSize: '12px', color: '#9CA3AF', marginTop: '2px', marginLeft: '0', cursor: canJoinActivity ? 'pointer' : 'default' }}
-                          className={canJoinActivity ? 'active:scale-[0.98] transition-transform' : ''}
+                          className={canJoinActivity ? 'hover:opacity-75 active:scale-[0.98] transition' : ''}
                         >
                           {recentActivity.emoji && <span>{recentActivity.emoji} </span>}
                           <span>{recentActivity.label}</span>
