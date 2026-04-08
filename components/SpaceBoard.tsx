@@ -244,6 +244,19 @@ function buildActivityChips(
     ]
   }
 
+  // Emotional baseline chips — always available, deduped against time-aware set
+  const baseline = [
+    { emoji: '', label: 'Relaxing' },
+    { emoji: '', label: 'Working' },
+    { emoji: '', label: 'Out' },
+    { emoji: '', label: 'Stressed' },
+    { emoji: '', label: 'Good' },
+  ]
+  const chipLabels = new Set(chips.map(c => c.label.toLowerCase()))
+  for (const b of baseline) {
+    if (!chipLabels.has(b.label.toLowerCase())) chips.push(b)
+  }
+
   const now = Date.now()
   const isRecent = (label: string) => {
     const t = recentTaps.get(label)
@@ -539,6 +552,9 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const [suggestionsExpanded, setSuggestionsExpanded] = useState(false)
   const [tapInFeedback,       setTapInFeedback]       = useState<string | null>(null)
   const [tappedState,         setTappedState]         = useState<string | null>(null)
+  const [hasJoinedState,      setHasJoinedState]      = useState(() => {
+    try { return !!localStorage.getItem('glanceable_joined_once') } catch { return false }
+  })
   const [customText,          setCustomText]          = useState('')
 
   const recentTaps = useRef<Map<string, number>>(new Map())
@@ -1157,7 +1173,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
           return (
             <section className="px-5 pb-5 lg:pb-4">
               <Label>Current</Label>
-              {activeMemberId && visibleMembers.some(m => m.id !== activeMemberId && latestActivityByMemberId.has(m.id)) && (
+              {!hasJoinedState && activeMemberId && visibleMembers.some(m => m.id !== activeMemberId && latestActivityByMemberId.has(m.id)) && (
                 <p style={{ fontSize: '11px', color: '#C4C0B8', marginTop: '2px', marginBottom: '0' }}>tap a state to join</p>
               )}
               <div className="mt-2 space-y-2">
@@ -1176,7 +1192,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                           )}
                           {activeMemberId && m.id !== activeMemberId ? (
                             <button
-                              onClick={() => handleJoinState(m.presence_state)}
+                              onClick={() => { handleJoinState(m.presence_state); if (!hasJoinedState) { setHasJoinedState(true); try { localStorage.setItem('glanceable_joined_once', '1') } catch {} } }}
                               style={{ color: 'inherit', font: 'inherit', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
                               className="opacity-75 hover:opacity-100 hover:underline active:scale-[0.98] transition"
                             >
@@ -1194,12 +1210,11 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                         <p
                           onClick={canJoinActivity ? () => {
                             console.log('[tap-to-join] activity label:', recentActivity.label, '| activeMemberId:', activeMemberId)
-                            // tapIn → logEvent → inserts into events table (same path as quick log chips)
-                            // handleJoinState would write to members.presence_state which rejects non-enum values
                             tapIn(recentActivity.emoji || '', recentActivity.label)
+                            if (!hasJoinedState) { setHasJoinedState(true); try { localStorage.setItem('glanceable_joined_once', '1') } catch {} }
                           } : undefined}
                           style={{ fontSize: '12px', color: '#9CA3AF', marginTop: '2px', marginLeft: '0', cursor: canJoinActivity ? 'pointer' : 'default' }}
-                          className={canJoinActivity ? 'hover:opacity-75 active:scale-[0.98] transition' : ''}
+                          className={canJoinActivity ? 'hover:opacity-75 hover:underline active:scale-[0.98] transition' : ''}
                         >
                           {recentActivity.emoji && <span>{recentActivity.emoji} </span>}
                           <span>{recentActivity.label}</span>
