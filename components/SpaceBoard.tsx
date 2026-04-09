@@ -560,6 +560,9 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   })
   // Label of the simulated "Partner just joined" ghost row; null = not showing
   const [simulatedJoinLabel,  setSimulatedJoinLabel]  = useState<string | null>(null)
+  const [joinedFeedback,      setJoinedFeedback]      = useState<string | null>(null) // member id whose state was just joined
+  const [echoLabel,           setEchoLabel]           = useState<string | null>(null) // transient echo of own last tap
+  const echoTimer             = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [customText,          setCustomText]          = useState('')
 
   const recentTaps = useRef<Map<string, number>>(new Map())
@@ -767,6 +770,11 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
     setTapInFeedback(label)
     if (tapInTimer.current) clearTimeout(tapInTimer.current)
     tapInTimer.current = setTimeout(() => setTapInFeedback(null), 1200)
+
+    // Echo moment — briefly show the tapped label near the user's own CURRENT row
+    setEchoLabel(label)
+    if (echoTimer.current) clearTimeout(echoTimer.current)
+    echoTimer.current = setTimeout(() => setEchoLabel(null), 2200)
 
     // First-run onboarding: show a simulated "Partner just joined" ghost row for 3s
     // Only when solo (no other real members) and onboarding not yet seen
@@ -1189,9 +1197,17 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
           return (
             <section className="px-5 pb-5 lg:pb-4">
               <Label>Current</Label>
-              {!hasJoinedState && activeMemberId && visibleMembers.some(m => m.id !== activeMemberId && latestActivityByMemberId.has(m.id)) && (
-                <p style={{ fontSize: '11px', color: '#C4C0B8', marginTop: '2px', marginBottom: '0' }}>tap a state to join</p>
-              )}
+              {(() => {
+                const isSolo = visibleMembers.every(m => m.id === activeMemberId)
+                const hasOtherJoinable = activeMemberId && visibleMembers.some(m => m.id !== activeMemberId && latestActivityByMemberId.has(m.id))
+                if (isSolo && activeMemberId && latestActivityByMemberId.has(activeMemberId)) {
+                  return <p style={{ fontSize: '11px', color: '#C4C0B8', marginTop: '2px', marginBottom: '0' }}>Share a moment.</p>
+                }
+                if (!hasJoinedState && hasOtherJoinable) {
+                  return <p style={{ fontSize: '11px', color: '#C4C0B8', marginTop: '2px', marginBottom: '0' }}>tap a state to join</p>
+                }
+                return null
+              })()}
               <div className="mt-2 space-y-2">
                 {simulatedJoinLabel && (
                   <div style={{ opacity: 0.6 }}>
@@ -1205,15 +1221,18 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                   </div>
                 )}
                 {visibleMembers.map(m => {
+                  const isSolo = visibleMembers.every(mi => mi.id === activeMemberId)
                   const recentActivity = latestActivityByMemberId.get(m.id)
                   const canJoinActivity = !!activeMemberId && m.id !== activeMemberId && !!recentActivity
+                  const isMe = m.id === activeMemberId
+                  const soloEmphasis = isSolo && isMe
                   return (
                     <div key={m.id}>
                       <div className="flex items-center justify-between">
-                        <span style={{ fontSize: '14px', color: '#1f2937', fontWeight: m.id === activeMemberId ? 500 : 400 }}>
+                        <span style={{ fontSize: soloEmphasis ? '15px' : '14px', color: '#1f2937', fontWeight: isMe ? 500 : 400 }}>
                           {m.display_name}
                         </span>
-                        <span style={{ fontSize: '13px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span style={{ fontSize: soloEmphasis ? '14px' : '13px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '5px' }}>
                           {presenceDotColor(m.presence_state) && (
                             <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: presenceDotColor(m.presence_state)!, flexShrink: 0 }} />
                           )}
@@ -1239,13 +1258,19 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                             console.log('[tap-to-join] activity label:', recentActivity.label, '| activeMemberId:', activeMemberId)
                             tapIn(recentActivity.emoji || '', recentActivity.label)
                             if (!hasJoinedState) { setHasJoinedState(true); try { localStorage.setItem('glanceable_joined_once', '1') } catch {} }
+                            setJoinedFeedback(m.id)
+                            setTimeout(() => setJoinedFeedback(null), 1000)
                           } : undefined}
-                          style={{ fontSize: '12px', color: '#9CA3AF', marginTop: '2px', marginLeft: '0', cursor: canJoinActivity ? 'pointer' : 'default' }}
+                          style={{ fontSize: '12px', color: isMe ? '#6B7280' : '#9CA3AF', marginTop: '2px', marginLeft: '0', cursor: canJoinActivity ? 'pointer' : 'default' }}
                           className={canJoinActivity ? 'hover:opacity-75 hover:underline active:scale-[0.98] transition' : ''}
                         >
                           {recentActivity.emoji && <span>{recentActivity.emoji} </span>}
                           <span>{recentActivity.label}</span>
+                          {joinedFeedback === m.id && <span style={{ color: '#C4C0B8', marginLeft: '6px' }}>joined</span>}
                         </p>
+                      )}
+                      {isMe && echoLabel && echoLabel === recentActivity?.label && (
+                        <p style={{ fontSize: '11px', color: '#C4C0B8', marginTop: '1px' }}>just now</p>
                       )}
                     </div>
                   )
@@ -1301,12 +1326,15 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                 <p style={{ fontSize: '14px', color: '#4A453F' }}>✓ {tapInFeedback}</p>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
-                  {activityChips.map(chip => {
-                    const norm = chip.label.trim().toLowerCase()
-                    const memberCount = members.filter(m =>
-                      latestActivityByMemberId.get(m.id)?.label.trim().toLowerCase() === norm
-                    ).length
-                    return (
+                  {[...activityChips]
+                    .map(chip => ({
+                      chip,
+                      count: members.filter(m =>
+                        latestActivityByMemberId.get(m.id)?.label.trim().toLowerCase() === chip.label.trim().toLowerCase()
+                      ).length,
+                    }))
+                    .sort((a, b) => b.count - a.count)
+                    .map(({ chip, count }) => (
                     <button
                       key={chip.label}
                       onClick={() => tapIn(chip.emoji, chip.label)}
@@ -1323,35 +1351,11 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                       }}
                     >
                       {chip.emoji ? `${chip.emoji} ${chip.label}` : chip.label}
-                      {memberCount >= 1 && <span style={{ color: '#9CA3AF', marginLeft: '4px' }}>· {memberCount}</span>}
+                      {count >= 1 && <span style={{ color: '#9CA3AF', marginLeft: '4px' }}>· {count}</span>}
                     </button>
-                    )
-                  })}
+                  ))}
                 </div>
               )}
-              {!tapInFeedback && (() => {
-                const quickEmojis = [
-                  { icon: '🍽', label: 'Eating' },
-                  { icon: '🚗', label: 'On the way' },
-                  { icon: '🏠', label: 'Home' },
-                  { icon: '😴', label: 'Sleeping' },
-                  { icon: '😌', label: 'Relaxing' },
-                ]
-                return (
-                  <div style={{ display: 'flex', gap: '12px', marginTop: '10px', marginBottom: '2px' }}>
-                    {quickEmojis.map(e => (
-                      <button
-                        key={e.icon}
-                        type="button"
-                        onClick={() => { setCustomText(e.label); customInputRef.current?.focus() }}
-                        style={{ fontSize: '18px', border: 'none', background: 'none', cursor: 'pointer', padding: '0', lineHeight: 1 }}
-                      >
-                        {e.icon}
-                      </button>
-                    ))}
-                  </div>
-                )
-              })()}
               {!tapInFeedback && (
                 <form
                   style={{ marginTop: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}
