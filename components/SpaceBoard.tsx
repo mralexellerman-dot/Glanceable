@@ -13,6 +13,18 @@ import { onNetworkChange } from '@/lib/network'
 import type { NetworkType } from '@/lib/network'
 
 
+// ─── State vs Event classification ────────────────────────────────────────────
+// Passive emotional/presence states that should ONLY appear in CURRENT, never in TODAY.
+// Events/actions (Dinner started, On the way, Coffee…) are NOT in this set and flow to TODAY normally.
+const STATE_ONLY_LABELS = new Set([
+  'relaxing', 'working', 'out', 'home', 'good', 'stressed', 'tired', 'focused',
+  'busy', 'peaceful', 'offline', 'awake', 'sleeping', 'sleep soon', 'watching',
+  'winding down', 'grateful', 'excited', 'hoping',
+])
+function isStateOnly(label: string): boolean {
+  return STATE_ONLY_LABELS.has(label.trim().toLowerCase())
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 // Sheet quick chips — social/identity first, no chores
@@ -193,79 +205,56 @@ function buildPresenceChips(): { label: string; state: string }[] {
 
 const RECENT_TAP_MS = 45 * 60_000
 
-// Activity chips for Quick Log — time-aware, recently-tapped items sink to the end
-function buildActivityChips(
-  spaceName: string,
+interface Chip { emoji: string; label: string }
+
+// Build dynamic chip palette: SOCIAL → CORE → CONTEXT → RECENT → optional SPARK, capped 6–8
+function buildDynamicChips(
   hour: number,
-  recentTaps: Map<string, number> = new Map(),
-): { emoji: string; label: string }[] {
-  const isTeam = /team|practice|league|gym|court|dance|volleyball|soccer|hockey|yoga/.test(spaceName.toLowerCase())
+  socialLabels: { label: string; count: number }[],  // from CURRENT members
+  userHistory:  string[],                             // recent event labels for active user
+  seen: Set<string> = new Set(),                      // already-shown labels (normalized)
+): Chip[] {
+  const result: Chip[] = []
+  const added = new Set<string>(seen)
 
-  let chips: { emoji: string; label: string }[]
-  if (isTeam) {
-    chips = [
-      { emoji: '', label: 'Warmup' },
-      { emoji: '', label: 'Drills' },
-      { emoji: '', label: 'Scrimmage' },
-      { emoji: '', label: 'Wrapping up' },
-    ]
-  } else if (hour >= 5 && hour < 11) {
-    chips = [
-      { emoji: '☕', label: 'Coffee' },
-      { emoji: '',   label: 'Breakfast' },
-      { emoji: '',   label: 'Leaving' },
-      { emoji: '',   label: 'Working' },
-      { emoji: '',   label: 'School' },
-    ]
-  } else if (hour >= 11 && hour < 16) {
-    chips = [
-      { emoji: '',   label: 'Lunch' },
-      { emoji: '',   label: 'Working' },
-      { emoji: '',   label: 'Errands' },
-      { emoji: '',   label: 'Out' },
-    ]
-  } else if (hour >= 16 && hour < 21) {
-    chips = [
-      { emoji: '🍝', label: 'Dinner started' },
-      { emoji: '',   label: 'Cooking' },
-      { emoji: '',   label: 'Relaxing' },
-      { emoji: '',   label: 'Home' },
-    ]
-  } else if (hour >= 21 || hour < 2) {
-    chips = [
-      { emoji: '',   label: 'Relaxing' },
-      { emoji: '',   label: 'Watching' },
-      { emoji: '',   label: 'Sleep soon' },
-    ]
-  } else {
-    chips = [
-      { emoji: '',   label: 'Relaxing' },
-      { emoji: '',   label: 'Awake' },
-    ]
+  function push(label: string, emoji = '') {
+    const norm = label.trim().toLowerCase()
+    if (added.has(norm)) return
+    added.add(norm)
+    result.push({ emoji, label })
   }
 
-  // Emotional baseline chips — always available, deduped against time-aware set
-  const baseline = [
-    { emoji: '', label: 'Relaxing' },
-    { emoji: '', label: 'Working' },
-    { emoji: '', label: 'Out' },
-    { emoji: '', label: 'Stressed' },
-    { emoji: '', label: 'Good' },
-  ]
-  const chipLabels = new Set(chips.map(c => c.label.toLowerCase()))
-  for (const b of baseline) {
-    if (!chipLabels.has(b.label.toLowerCase())) chips.push(b)
+  // 1) SOCIAL — current shared states, sorted by count desc, max 2
+  ;[...socialLabels]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 2)
+    .forEach(s => push(s.label))
+
+  // 2) CORE — always present
+  ;['Working', 'Relaxing', 'Out', 'Home'].forEach(l => push(l))
+
+  // 3) CONTEXT — 2–3 time-aware additions
+  const context: string[] =
+    hour >= 5  && hour < 11 ? ['Getting ready', 'Coffee', 'Focused'] :
+    hour >= 11 && hour < 15 ? ['Lunch', 'Busy'] :
+    hour >= 15 && hour < 21 ? ['Dinner', 'Winding down'] :
+    ['Tired', 'Sleep soon']
+  context.forEach(l => push(l))
+
+  // 4) RECENT — last 3 unique user history labels not already shown, max 2
+  const recentAdded: string[] = []
+  for (const label of userHistory) {
+    if (recentAdded.length >= 2) break
+    const norm = label.trim().toLowerCase()
+    if (!added.has(norm)) { push(label); recentAdded.push(norm) }
   }
 
-  const now = Date.now()
-  const isRecent = (label: string) => {
-    const t = recentTaps.get(label)
-    return t !== undefined && now - t < RECENT_TAP_MS
-  }
-  return [
-    ...chips.filter(c => !isRecent(c.label)),
-    ...chips.filter(c =>  isRecent(c.label)),
-  ]
+  // 5) SPARK — one rotating emotional chip, at most once per session
+  const sparks = ['Grateful', 'Excited', 'Hoping']
+  const sparkIdx = Math.floor(Date.now() / (24 * 3_600_000)) % sparks.length // rotates daily
+  push(sparks[sparkIdx])
+
+  return result.slice(0, 8)
 }
 
 // Subtle background warmth by time of day
@@ -989,6 +978,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
       if (!isInWindow || !isNotFuture) return false
       if (activeInCurrentIds.has(e.id)) return false
       if (activeCurrentLabels.has(e.label.trim().toLowerCase())) return false
+      if (isStateOnly(e.label)) return false  // passive states live in CURRENT only
       return true
     })
 
@@ -1060,7 +1050,35 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
   // Presence chips (TAP IN) and activity chips (QUICK LOG) are kept separate
   const presenceChips  = buildPresenceChips()
-  const activityChips  = space ? buildActivityChips(space.name, new Date().getHours(), recentTaps.current) : []
+
+  // Build dynamic chip palette
+  const activityChips = (() => {
+    const hour = new Date().getHours()
+
+    // SOCIAL: labels currently active in CURRENT with their member counts
+    const socialLabels: { label: string; count: number }[] = []
+    for (const [, event] of latestActivityByMemberId) {
+      const norm = event.label.trim().toLowerCase()
+      const count = members.filter(m =>
+        latestActivityByMemberId.get(m.id)?.label.trim().toLowerCase() === norm
+      ).length
+      if (count >= 1 && !socialLabels.some(s => s.label.trim().toLowerCase() === norm)) {
+        socialLabels.push({ label: event.label, count })
+      }
+    }
+
+    // RECENT: last 5 unique event labels for the active user
+    const userHistory: string[] = []
+    const histSeen = new Set<string>()
+    for (const e of combinedEvents) {
+      if (e.member_id !== activeMemberId) continue
+      const norm = e.label.trim().toLowerCase()
+      if (!histSeen.has(norm)) { histSeen.add(norm); userHistory.push(e.label) }
+      if (userHistory.length >= 5) break
+    }
+
+    return buildDynamicChips(hour, socialLabels, userHistory)
+  })()
 
   // Active presence state for highlighting the current chip
   const myPresenceState = members.find(m => m.id === activeMemberId)?.presence_state ?? ''
@@ -1326,18 +1344,14 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                 <p style={{ fontSize: '14px', color: '#4A453F' }}>✓ {tapInFeedback}</p>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
-                  {[...activityChips]
-                    .map(chip => ({
-                      chip,
-                      count: members.filter(m =>
-                        latestActivityByMemberId.get(m.id)?.label.trim().toLowerCase() === chip.label.trim().toLowerCase()
-                      ).length,
-                    }))
-                    .sort((a, b) => b.count - a.count)
-                    .map(({ chip, count }) => (
+                  {activityChips.map(chip => {
+                    const count = members.filter(m =>
+                      latestActivityByMemberId.get(m.id)?.label.trim().toLowerCase() === chip.label.trim().toLowerCase()
+                    ).length
+                    return (
                     <button
                       key={chip.label}
-                      onClick={() => tapIn(chip.emoji, chip.label)}
+                      onClick={() => { setCustomText(chip.label); customInputRef.current?.focus() }}
                       style={{
                         display:      'inline-flex',
                         alignItems:   'center',
@@ -1353,7 +1367,8 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                       {chip.emoji ? `${chip.emoji} ${chip.label}` : chip.label}
                       {count >= 1 && <span style={{ color: '#9CA3AF', marginLeft: '4px' }}>· {count}</span>}
                     </button>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
               {!tapInFeedback && (
@@ -1404,7 +1419,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                     value={customText}
                     onChange={e => setCustomText(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Escape') { setCustomText('') } }}
-                    placeholder="What's happening…"
+                    placeholder="What are you in?"
                     style={{
                       flex: 1,
                       fontSize: '13px',
@@ -1425,6 +1440,37 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                   </button>
                 </form>
               )}
+              {/* Inline typing suggestions — matches from dynamic palette + core states */}
+              {customText.trim().length >= 2 && (() => {
+                const q = customText.trim().toLowerCase()
+                const pool = [
+                  ...activityChips.map(c => c.label),
+                  'Working', 'Relaxing', 'Out', 'Home', 'Focused', 'Busy', 'Tired',
+                ]
+                const seen = new Set<string>()
+                const matches = pool.filter(l => {
+                  const norm = l.toLowerCase()
+                  if (!norm.startsWith(q) && !norm.includes(q)) return false
+                  if (seen.has(norm)) return false
+                  seen.add(norm)
+                  return true
+                }).slice(0, 3)
+                if (!matches.length) return null
+                return (
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '6px', flexWrap: 'wrap' }}>
+                    {matches.map(label => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => { setCustomText(label); customInputRef.current?.focus() }}
+                        style={{ fontSize: '12px', color: '#6B7280', background: 'none', border: 'none', padding: '0', cursor: 'pointer', textDecoration: 'underline', textDecorationColor: '#D1CDC8' }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )
+              })()}
             </div>
           </section>
         )}
