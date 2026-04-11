@@ -4,11 +4,11 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: 'Glanceable',
     short_name: 'Glanceable',
-    description: 'A calm status board for shared spaces.',
+    description: 'Know what\'s happening without asking.',
     start_url: '/',
     display: 'standalone',
-    background_color: '#FAFAF8',
-    theme_color: '#1A1A18',
+    background_color: '#ffffff',
+    theme_color: '#ffffff',
     icons: [
       {
         src: '/icon-192.png',

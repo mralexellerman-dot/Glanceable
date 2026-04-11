@@ -11,18 +11,13 @@ import { getWeatherCondition } from '@/lib/weather'
 import type { WeatherCondition } from '@/lib/weather'
 import { onNetworkChange } from '@/lib/network'
 import type { NetworkType } from '@/lib/network'
+import { parseScheduled, classifyEntry } from '@/lib/classify'
+import PersonalIndex from '@/components/PersonalIndex'
 
 
-// ─── State vs Event classification ────────────────────────────────────────────
-// Passive emotional/presence states that should ONLY appear in CURRENT, never in TODAY.
-// Events/actions (Dinner started, On the way, Coffee…) are NOT in this set and flow to TODAY normally.
-const STATE_ONLY_LABELS = new Set([
-  'relaxing', 'working', 'out', 'home', 'good', 'stressed', 'tired', 'focused',
-  'busy', 'peaceful', 'offline', 'awake', 'sleeping', 'sleep soon', 'watching',
-  'winding down', 'grateful', 'excited', 'hoping',
-])
+// isStateOnly — used in todayEvents filter
 function isStateOnly(label: string): boolean {
-  return STATE_ONLY_LABELS.has(label.trim().toLowerCase())
+  return classifyEntry(label) === 'state'
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -131,48 +126,6 @@ function formatExactTime(ts: string): string {
   return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
-// Parse natural-language scheduling phrases.
-// Returns { label, starts_at } if matched, null otherwise.
-function parseScheduled(text: string): { label: string; starts_at: string } | null {
-  // "dinner in 20" / "dinner in 20m" / "dinner in 20 min" / "dinner in 2h" / "dinner in 1 hour"
-  const rel = text.match(/^(.+?)\s+in\s+(\d+)\s*(m(?:in(?:ute)?s?)?|h(?:r?s?|ours?)?)$/i)
-  if (rel) {
-    const raw  = rel[1].trim()
-    const label = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
-    const n     = parseInt(rel[2])
-    const unitStr = (rel[3] || 'm').toLowerCase()
-    // Normalize unit: recognize min/minute/minutes/m as minutes, h/hr/hour/hours as hours
-    const isHours = /^h/.test(unitStr) // starts with 'h'
-    const ms    = isHours ? n * 3_600_000 : n * 60_000
-    if (n > 0 && ms <= 24 * 3_600_000) {
-      return { label, starts_at: new Date(Date.now() + ms).toISOString() }
-    }
-  }
-  // "movie at 8" / "pickup at 3:15"
-  const at = text.match(/^(.+?)\s+at\s+(\d{1,2})(?::(\d{2}))?$/i)
-  if (at) {
-    const raw  = at[1].trim()
-    const label = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
-    const h     = parseInt(at[2])
-    const m     = parseInt(at[3] ?? '0')
-    if (h >= 1 && h <= 12 && m >= 0 && m < 60) {
-      const now   = new Date()
-      const nowMs = now.getTime()
-      // Try candidates in order: h (AM/noon), h+12 (PM/midnight)
-      for (const ch of h === 12 ? [12, 0] : [h, h + 12]) {
-        const d = new Date(now)
-        d.setHours(ch, m, 0, 0)
-        if (d.getTime() > nowMs) return { label, starts_at: d.toISOString() }
-      }
-      // Both past — wrap to tomorrow AM
-      const d = new Date(now)
-      d.setDate(d.getDate() + 1)
-      d.setHours(h, m, 0, 0)
-      return { label, starts_at: d.toISOString() }
-    }
-  }
-  return null
-}
 
 function matchesPreset(query: string, label: string): boolean {
   const q = query.toLowerCase().trim()
@@ -559,6 +512,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const [expandedUpcomingId, setExpandedUpcomingId]   = useState<string | null>(null)
   const [weather,            setWeather]              = useState<WeatherCondition>(null)
   const [otherSpaces, setOtherSpaces] = useState<{ id: string; name: string }[]>([])
+  const [showPI, setShowPI] = useState(false)
 
   // Wi-Fi nudge state
   type NudgeData = { message: string; confirmLabel: string; confirmState: string }
@@ -1591,6 +1545,15 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
         <Rule color={dividerColor} />
 
+        {/* ── PERSONAL INDEX ────────────────────────────────────────────────── */}
+        {showPI && activeMemberId && (
+          <PersonalIndex
+            spaceId={spaceId}
+            activeMemberId={activeMemberId}
+            onClose={() => setShowPI(false)}
+          />
+        )}
+
         {/* ── FOOTER ────────────────────────────────────────────────────────── */}
         <div className="px-5 pt-5 pb-3">
           <div className="flex items-center gap-4">
@@ -1604,6 +1567,15 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
             {isOwner && (
               <button onClick={regenerateInvite} className="text-xs" style={{ color: '#D0CCCA', border: 'none', background: 'none', cursor: 'pointer' }}>
                 Reset link
+              </button>
+            )}
+            {activeMemberId && !showPI && (
+              <button
+                onClick={() => setShowPI(true)}
+                className="text-xs"
+                style={{ color: '#C4C0B8', border: 'none', background: 'none', cursor: 'pointer', padding: 0 }}
+              >
+                This week
               </button>
             )}
             <button onClick={leaveSpace} className="text-xs ml-auto" style={{ color: '#D0CCCA', border: 'none', background: 'none', cursor: 'pointer' }}>

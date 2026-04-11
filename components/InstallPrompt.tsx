@@ -2,17 +2,25 @@
 
 import { useEffect, useState } from 'react'
 
+const DISMISSED_KEY = 'pwa-prompt-dismissed'
+
 export default function InstallPrompt() {
-  const [show, setShow]           = useState(false)
+  const [show, setShow]             = useState(false)
   const [showSafari, setShowSafari] = useState(false)
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null)
 
   useEffect(() => {
-    // Already installed — running as standalone PWA
-    if (window.matchMedia('(display-mode: standalone)').matches) return
-    // Already dismissed this session
-    if (sessionStorage.getItem('pwa-prompt-dismissed')) return
+    // Already running as an installed PWA — hide everywhere.
+    // matchMedia covers Chrome/Android; navigator.standalone covers iOS Safari.
+    const isStandalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      (navigator as any).standalone === true
+    if (isStandalone) return
 
+    // User already dismissed — don't show again across sessions.
+    if (localStorage.getItem(DISMISSED_KEY)) return
+
+    // Chrome/Android: capture the native install prompt.
     const handler = (e: Event) => {
       e.preventDefault()
       setDeferredPrompt(e)
@@ -20,28 +28,30 @@ export default function InstallPrompt() {
     }
     window.addEventListener('beforeinstallprompt', handler)
 
-    // Safari on iOS doesn't fire beforeinstallprompt — detect it separately
-    const isIosSafari =
-      /iphone|ipad|ipod/i.test(navigator.userAgent) &&
-      !('standalone' in navigator && (navigator as any).standalone)
-    if (isIosSafari) setShow(true)
+    // iOS Safari: no beforeinstallprompt — show the manual nudge instead.
+    const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent)
+    if (isIos) setShow(true)
 
     return () => window.removeEventListener('beforeinstallprompt', handler)
   }, [])
 
   function dismiss() {
-    sessionStorage.setItem('pwa-prompt-dismissed', '1')
+    localStorage.setItem(DISMISSED_KEY, '1')
     setShow(false)
     setShowSafari(false)
   }
 
   async function install() {
     if (deferredPrompt) {
+      // Chrome/Android: trigger the native install dialog.
       deferredPrompt.prompt()
       const { outcome } = await deferredPrompt.userChoice
       if (outcome === 'accepted') { setShow(false); return }
+      // Dismissed from native dialog — remember it.
+      dismiss()
+      return
     }
-    // iOS Safari — no native prompt, show manual instructions
+    // iOS Safari: no native prompt, show one-tap manual instruction.
     setShowSafari(true)
   }
 
@@ -49,19 +59,19 @@ export default function InstallPrompt() {
 
   return (
     <div style={{
-      position: 'fixed',
-      bottom: '20px',
-      left: '50%',
+      position:  'fixed',
+      bottom:    '20px',
+      left:      '50%',
       transform: 'translateX(-50%)',
       background: '#1A1A18',
-      color: '#FAFAF8',
+      color:      '#FAFAF8',
       borderRadius: '12px',
-      padding: '10px 16px',
-      fontSize: '13px',
-      display: 'flex',
+      padding:   '10px 16px',
+      fontSize:  '13px',
+      display:   'flex',
       alignItems: 'center',
-      gap: '12px',
-      zIndex: 9999,
+      gap:        '12px',
+      zIndex:     9999,
       whiteSpace: 'nowrap',
       boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
     }}>
