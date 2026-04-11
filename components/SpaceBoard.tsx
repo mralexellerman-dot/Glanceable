@@ -511,8 +511,9 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const customInputRef = useRef<HTMLInputElement>(null)
   const [expandedUpcomingId, setExpandedUpcomingId]   = useState<string | null>(null)
   const [weather,            setWeather]              = useState<WeatherCondition>(null)
-  const [otherSpaces, setOtherSpaces] = useState<{ id: string; name: string }[]>([])
-  const [showPI, setShowPI] = useState(false)
+  const [otherSpaces, setOtherSpaces]         = useState<{ id: string; name: string }[]>([])
+  const [momentInviteLabel, setMomentInviteLabel] = useState<string | null>(null)
+  const [momentInviteCopied, setMomentInviteCopied] = useState(false)
 
   // Wi-Fi nudge state
   type NudgeData = { message: string; confirmLabel: string; confirmState: string }
@@ -710,6 +711,20 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
     console.log('[tapIn] called with:', { emoji, label })
     logEvent(emoji, label)
     recentTaps.current.set(label, Date.now())
+    // Solo-space moment invite: show "Let them see this" occasionally
+    const isSolo = members.length === 1
+    if (isSolo && activeMemberId) {
+      try {
+        const key   = 'glanceable_moment_invite_count'
+        const count = parseInt(localStorage.getItem(key) ?? '0')
+        // Show on first 3 taps, then every 10th
+        if (count < 3 || count % 10 === 0) {
+          setMomentInviteLabel(label)
+          setTimeout(() => setMomentInviteLabel(null), 12_000)
+        }
+        localStorage.setItem(key, String(count + 1))
+      } catch {}
+    }
     setTapInFeedback(label)
     if (tapInTimer.current) clearTimeout(tapInTimer.current)
     tapInTimer.current = setTimeout(() => setTapInFeedback(null), 1200)
@@ -1252,6 +1267,37 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
           )
         })()}
 
+        {/* ── MOMENT INVITE ─────────────────────────────────────────────────── */}
+        {momentInviteLabel && space && !isSearching && (
+          <div className="px-5 pb-3">
+            <button
+              onClick={async () => {
+                const link = `${window.location.origin}/join/${space.invite_code}`
+                const msg  = `I'm ${momentInviteLabel.toLowerCase()}.\nYou can see what I'm in here:\n${link}`
+                try {
+                  if (navigator.share) {
+                    await navigator.share({ text: msg })
+                  } else {
+                    await navigator.clipboard.writeText(msg)
+                    setMomentInviteCopied(true)
+                    setTimeout(() => setMomentInviteCopied(false), 2000)
+                  }
+                } catch {}
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                fontSize: '13px',
+                color: momentInviteCopied ? '#4A9' : '#B0ABA4',
+              }}
+            >
+              {momentInviteCopied ? '✓ Message copied' : 'Let them see this →'}
+            </button>
+          </div>
+        )}
+
         {/* ── TAP IN (presence) ─────────────────────────────────────────────── */}
         {!isSearching && activeMemberId && (
           <section className="px-5 pb-4 lg:pb-3">
@@ -1451,6 +1497,11 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
         <Rule color={dividerColor} />
 
+        {/* ── PERSONAL INDEX ────────────────────────────────────────────────── */}
+        {!isSearching && activeMemberId && (
+          <PersonalIndex spaceId={spaceId} activeMemberId={activeMemberId} />
+        )}
+
         {/* ── Search Results (replaces Today/Earlier when active) ────────────── */}
         {isSearching && (
           <section className="px-5 py-3">
@@ -1545,15 +1596,6 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
         <Rule color={dividerColor} />
 
-        {/* ── PERSONAL INDEX ────────────────────────────────────────────────── */}
-        {showPI && activeMemberId && (
-          <PersonalIndex
-            spaceId={spaceId}
-            activeMemberId={activeMemberId}
-            onClose={() => setShowPI(false)}
-          />
-        )}
-
         {/* ── FOOTER ────────────────────────────────────────────────────────── */}
         <div className="px-5 pt-5 pb-3">
           <div className="flex items-center gap-4">
@@ -1567,15 +1609,6 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
             {isOwner && (
               <button onClick={regenerateInvite} className="text-xs" style={{ color: '#D0CCCA', border: 'none', background: 'none', cursor: 'pointer' }}>
                 Reset link
-              </button>
-            )}
-            {activeMemberId && !showPI && (
-              <button
-                onClick={() => setShowPI(true)}
-                className="text-xs"
-                style={{ color: '#C4C0B8', border: 'none', background: 'none', cursor: 'pointer', padding: 0 }}
-              >
-                This week
               </button>
             )}
             <button onClick={leaveSpace} className="text-xs ml-auto" style={{ color: '#D0CCCA', border: 'none', background: 'none', cursor: 'pointer' }}>

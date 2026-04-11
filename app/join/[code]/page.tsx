@@ -1,301 +1,391 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { getBrowserId } from '@/lib/memberships'
 import { buildRecentActivityMap } from '@/lib/activity'
 import type { Space, Event, Member } from '@/lib/types'
 
-function relativeTime(dateStr: string): string {
-  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
-  if (diff < 60) return `just now`
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`
-  return `${Math.floor(diff / 86400)}d`
-}
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type Phase = 'loading' | 'landing' | 'naming' | 'joined' | 'not_found'
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function JoinPage() {
   const router = useRouter()
   const params = useParams()
-  const code = (params.code as string).toUpperCase()
+  const code   = (params.code as string).toUpperCase()
 
-  const [space, setSpace] = useState<Space | null>(null)
-  const [members, setMembers] = useState<Member[]>([])
-  const [recentEvents, setRecentEvents] = useState<Event[]>([])
-  const [memberName, setMemberName] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [joining, setJoining] = useState(false)
-  const [error, setError] = useState('')
-  const [notFound, setNotFound] = useState(false)
-  const [duplicateCandidate, setDuplicateCandidate] = useState<Member | null>(null)
+  // Data
+  const [space,        setSpace]        = useState<Space | null>(null)
+  const [members,      setMembers]      = useState<Member[]>([])
+  const [inviterName,  setInviterName]  = useState<string>('')
+  const [stateLabel,   setStateLabel]   = useState<string>('')
+
+  // Phase
+  const [phase,        setPhase]        = useState<Phase>('loading')
+  const [memberName,   setMemberName]   = useState('')
+  const [joining,      setJoining]      = useState(false)
+  const [error,        setError]        = useState('')
+
+  // Post-join
+  const [yourName,     setYourName]     = useState('')
+  const [showFeedback, setShowFeedback] = useState(false)
+  const [showInstall,  setShowInstall]  = useState(false)
+  const feedbackTimer                   = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Duplicate handling (kept inline, minimal)
+  const [dupCandidate, setDupCandidate] = useState<Member | null>(null)
+
+  // ─── Load ──────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     async function load() {
       const browserId = getBrowserId()
 
-      const { data } = await supabase
+      const { data: spaceData } = await supabase
         .from('spaces')
         .select('*')
         .eq('invite_code', code)
         .single()
 
-      if (!data) {
-        setNotFound(true)
-        setLoading(false)
+      if (!spaceData) {
+        setPhase('not_found')
         return
       }
 
-      // Already a member of this space? Go straight in.
+      // Already a member — go straight in
       const { data: existing } = await supabase
         .from('members')
         .select('id')
-        .eq('space_id', data.id)
+        .eq('space_id', spaceData.id)
         .eq('browser_id', browserId)
         .single()
 
       if (existing) {
-        router.replace(`/space/${data.id}`)
+        router.replace(`/space/${spaceData.id}`)
         return
       }
 
-      setSpace(data)
+      setSpace(spaceData)
 
-      // Fetch members and events to build preview
       const [{ data: membersData }, { data: eventsData }] = await Promise.all([
-        supabase
-          .from('members')
-          .select('*')
-          .eq('space_id', data.id)
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('events')
-          .select('*')
-          .eq('space_id', data.id)
-          .order('created_at', { ascending: false })
-          .limit(50),
+        supabase.from('members').select('*').eq('space_id', spaceData.id).order('created_at'),
+        supabase.from('events').select('*').eq('space_id', spaceData.id)
+          .order('created_at', { ascending: false }).limit(50),
       ])
 
-      setMembers(membersData ?? [])
-      setRecentEvents(eventsData ?? [])
-      setLoading(false)
+      const allMembers = membersData ?? []
+      const allEvents  = eventsData  ?? [] as Event[]
+      setMembers(allMembers)
+
+      // Find inviter's active state (30-min window)
+      const activityMap  = buildRecentActivityMap(allEvents)
+      const inviterMember = allMembers.find(m => activityMap.has(m.id))
+      const inviterEvent  = inviterMember ? activityMap.get(inviterMember.id) : null
+
+      if (inviterMember && inviterEvent) {
+        setInviterName(inviterMember.display_name)
+        setStateLabel(inviterEvent.label)
+        setPhase('landing')
+      } else if (allMembers.length > 0) {
+        // Space exists but no recent activity — still let them join
+        setInviterName(allMembers[0].display_name)
+        setStateLabel('')
+        setPhase('landing')
+      } else {
+        setPhase('landing')
+      }
     }
     load()
   }, [code, router])
 
-  async function handleJoin() {
-    if (!space || !memberName.trim()) return
+  // ─── Join logic ────────────────────────────────────────────────────────────
+
+  async function doJoin(name: string, useLabel: string) {
+    if (!space) return
     setJoining(true)
     setError('')
-
     const browserId = getBrowserId()
 
-    // Check for existing membership first (handles duplicate gracefully)
     const { data: existing } = await supabase
-      .from('members')
-      .select('id')
-      .eq('space_id', space.id)
-      .eq('browser_id', browserId)
-      .single()
+      .from('members').select('id')
+      .eq('space_id', space.id).eq('browser_id', browserId).single()
+    if (existing) { router.push(`/space/${space.id}`); return }
 
-    if (existing) {
-      router.push(`/space/${space.id}`)
-      return
-    }
-
-    // Name-based duplicate guard (case-insensitive)
-    const normalized = memberName.trim().toLowerCase()
-    const nameMatch = members.find(m => m.display_name.trim().toLowerCase() === normalized)
-    if (nameMatch) {
-      setDuplicateCandidate(nameMatch)
+    // Duplicate name guard
+    const norm = name.trim().toLowerCase()
+    const dup  = members.find(m => m.display_name.trim().toLowerCase() === norm)
+    if (dup) {
+      setDupCandidate(dup)
       setJoining(false)
       return
     }
 
-    await insertNewMember(space.id, browserId, memberName.trim())
-  }
-
-  async function handleRejoin() {
-    if (!space || !duplicateCandidate) return
-    setJoining(true)
-    const browserId = getBrowserId()
-    await supabase
-      .from('members')
-      .update({ browser_id: browserId })
-      .eq('id', duplicateCandidate.id)
-    router.push(`/space/${space.id}`)
-  }
-
-  async function handleJoinAsNew() {
-    if (!space) return
-    setJoining(true)
-    setDuplicateCandidate(null)
-    const browserId = getBrowserId()
-    await insertNewMember(space.id, browserId, memberName.trim())
-  }
-
-  async function insertNewMember(spaceId: string, browserId: string, name: string) {
-    const { error: err } = await supabase
-      .from('members')
-      .insert({
-        space_id: spaceId,
-        browser_id: browserId,
-        display_name: name,
-        presence_state: 'tbd',
-      })
+    const { error: err } = await supabase.from('members').insert({
+      space_id:       space.id,
+      browser_id:     browserId,
+      display_name:   name.trim(),
+      presence_state: useLabel || 'tbd',
+    })
 
     if (err) {
-      console.error('JOIN ERROR', err)
       setError(err.message)
       setJoining(false)
       return
     }
 
-    router.push(`/space/${space!.id}`)
+    setYourName(name.trim())
+    setJoining(false)
+    setPhase('joined')
+    setShowFeedback(true)
+    feedbackTimer.current = setTimeout(() => setShowFeedback(false), 2200)
+
+    // PWA nudge after a beat
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+      (navigator as any).standalone === true
+    if (!isStandalone && !localStorage.getItem('pwa-prompt-dismissed')) {
+      setTimeout(() => setShowInstall(true), 1800)
+    }
   }
 
-  if (loading) {
+  async function handleRejoin() {
+    if (!space || !dupCandidate) return
+    setJoining(true)
+    const browserId = getBrowserId()
+    await supabase.from('members').update({ browser_id: browserId }).eq('id', dupCandidate.id)
+    setYourName(dupCandidate.display_name)
+    setJoining(false)
+    setDupCandidate(null)
+    setPhase('joined')
+    setShowFeedback(true)
+    feedbackTimer.current = setTimeout(() => setShowFeedback(false), 2200)
+  }
+
+  // ─── Shared styles ─────────────────────────────────────────────────────────
+
+  const PAGE: React.CSSProperties = {
+    minHeight: '100dvh',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '0 24px',
+    background: '#FAFAF8',
+  }
+
+  const WRAP: React.CSSProperties = {
+    width: '100%',
+    maxWidth: '380px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '32px',
+  }
+
+  // ─── Loading ───────────────────────────────────────────────────────────────
+
+  if (phase === 'loading') {
+    return <div style={PAGE}><span style={{ color: '#C4C0B8', fontSize: '14px' }}>…</span></div>
+  }
+
+  // ─── Not found ─────────────────────────────────────────────────────────────
+
+  if (phase === 'not_found' || !space) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg)' }}>
-        <span className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</span>
+      <div style={PAGE}>
+        <p style={{ color: '#9CA3AF', fontSize: '14px' }}>This link is no longer active.</p>
       </div>
     )
   }
 
-  if (notFound || !space) {
+  // ─── Joined ────────────────────────────────────────────────────────────────
+
+  if (phase === 'joined') {
+    const count = members.length + 1  // inviter + you
     return (
-      <main className="min-h-screen flex items-center justify-center px-6" style={{ background: 'var(--bg)' }}>
-        <div className="text-center space-y-3">
-          <p style={{ color: 'var(--text-secondary)' }}>This invite link is invalid or has expired.</p>
-          <a href="/" className="text-sm underline" style={{ color: 'var(--text-muted)' }}>Go home</a>
+      <div style={PAGE}>
+        <div style={WRAP}>
+
+          {/* State with count */}
+          <div>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{
+                display: 'inline-flex', alignItems: 'center',
+                padding: '8px 20px', borderRadius: '999px',
+                background: '#1A1A18', color: '#FFFFFF',
+                fontSize: '16px', fontWeight: 500,
+              }}>
+                {stateLabel || 'Here'}
+              </span>
+              <span style={{ color: '#B0ABA4', fontSize: '14px' }}>· {count}</span>
+            </div>
+
+            {/* "You joined" feedback */}
+            <p style={{
+              marginTop: '10px', fontSize: '13px',
+              color: showFeedback ? '#6B7280' : 'transparent',
+              transition: 'color 600ms ease',
+            }}>
+              You joined
+            </p>
+          </div>
+
+          {/* Both users in CURRENT format */}
+          {stateLabel && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {inviterName && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <span style={{ fontSize: '14px', color: '#3A3530' }}>{inviterName}</span>
+                  <span style={{ fontSize: '13px', color: '#9A948E' }}>{stateLabel}</span>
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <span style={{ fontSize: '14px', color: '#3A3530' }}>{yourName}</span>
+                <span style={{ fontSize: '13px', color: '#9A948E' }}>{stateLabel}</span>
+              </div>
+            </div>
+          )}
+
+          {/* PWA nudge */}
+          {showInstall && (
+            <p style={{ fontSize: '12px', color: '#B0ABA4', marginTop: '8px' }}>
+              Keep sharing moments like this —{' '}
+              <button
+                onClick={() => {
+                  localStorage.setItem('pwa-prompt-dismissed', '1')
+                  setShowInstall(false)
+                }}
+                style={{ background: 'none', border: 'none', padding: 0, color: '#B0ABA4', fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' }}
+              >
+                add to home screen
+              </button>
+            </p>
+          )}
+
+          {/* Link into the full space */}
+          <a
+            href={`/space/${space.id}`}
+            style={{ fontSize: '12px', color: '#C4C0B8', textDecoration: 'none' }}
+          >
+            Open {space.name} →
+          </a>
+
         </div>
-      </main>
+      </div>
     )
   }
+
+  // ─── Landing + Naming ──────────────────────────────────────────────────────
 
   return (
-    <main
-      className="min-h-screen flex flex-col items-center justify-center px-6"
-      style={{ background: 'var(--bg)' }}
-    >
-      <div className="w-full max-w-[420px] space-y-6">
-        {/* Living place card */}
-        <div
-          className="rounded-2xl px-5 py-4 space-y-3"
-          style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
-        >
-          <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>
-            Join {space.name}
-          </h1>
-          {(() => {
-            // Use shared activity map builder (30 min window)
-            const latestActivityByMemberId = buildRecentActivityMap(recentEvents)
+    <div style={PAGE}>
+      <div style={WRAP}>
 
-            // Show up to 2 members, prefer those with recent activity
-            const membersWithActivity = members
-              .filter(m => latestActivityByMemberId.has(m.id))
-              .slice(0, 2)
-            const previewMembers =
-              membersWithActivity.length > 0
-                ? membersWithActivity
-                : members.slice(0, 2)
-
-            if (previewMembers.length === 0) {
-              return (
-                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                  Tap in to see what's happening.
-                </p>
-              )
-            }
-
-            return (
-              <div className="space-y-2">
-                {previewMembers.map(m => {
-                  const activity = latestActivityByMemberId.get(m.id)
-                  return (
-                    <div key={m.id} style={{ marginBottom: '8px' }}>
-                      <p style={{ color: 'var(--text)', fontSize: '14px', fontWeight: 400 }}>
-                        {m.display_name}
-                      </p>
-                      {activity && (
-                        <p
-                          style={{
-                            color: 'var(--text-secondary)',
-                            fontSize: '12px',
-                            marginTop: '2px',
-                          }}
-                        >
-                          {activity.emoji && <span>{activity.emoji} </span>}
-                          <span>{activity.label}</span>
-                          <span
-                            style={{
-                              marginLeft: '6px',
-                              color: 'var(--text-muted)',
-                            }}
-                          >
-                            · {relativeTime(activity.created_at)}
-                          </span>
-                        </p>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            )
-          })()}
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Tap in to see what's happening.</p>
-        </div>
-
-        {/* Join form */}
-        <div className="space-y-3">
-          <label className="block text-sm" style={{ color: 'var(--text-secondary)' }}>
-            Your name in {space.name}
-          </label>
-          <input
-            type="text"
-            value={memberName}
-            onChange={e => setMemberName(e.target.value)}
-            placeholder="Mom, Dad, Sam, Felix…"
-            className="w-full px-4 py-3 rounded-xl text-base outline-none"
-            style={{ border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
-            autoFocus
-            onKeyDown={e => e.key === 'Enter' && memberName.trim() && handleJoin()}
-          />
-          {error && <p className="text-sm text-red-500">{error}</p>}
-          {duplicateCandidate ? (
-            <div className="space-y-2">
-              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                <strong>{duplicateCandidate.display_name}</strong> already exists in this space. Is that you?
-              </p>
-              <button
-                onClick={handleRejoin}
-                disabled={joining}
-                className="w-full py-3.5 rounded-xl text-sm font-medium text-white transition-opacity disabled:opacity-40 active:opacity-80"
-                style={{ background: '#1A1A18' }}
-              >
-                {joining ? 'Joining…' : `Yes, rejoin as ${duplicateCandidate.display_name}`}
-              </button>
-              <button
-                onClick={handleJoinAsNew}
-                disabled={joining}
-                className="w-full py-3 rounded-xl text-sm font-medium transition-opacity disabled:opacity-40 active:opacity-80"
-                style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)', background: 'var(--surface)' }}
-              >
-                No, join as a new member
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={handleJoin}
-              disabled={!memberName.trim() || joining}
-              className="w-full py-3.5 rounded-xl text-sm font-medium text-white transition-opacity disabled:opacity-40 active:opacity-80"
-              style={{ background: '#1A1A18' }}
-            >
-              {joining ? 'Joining…' : `Join ${space.name}`}
-            </button>
+        {/* Inviter + state */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          {inviterName && (
+            <p style={{ fontSize: '15px', color: '#9A948E', margin: 0 }}>{inviterName}</p>
+          )}
+          {stateLabel && (
+            <p style={{ fontSize: '22px', fontWeight: 600, color: '#1C1814', margin: 0, letterSpacing: '-0.01em' }}>
+              {stateLabel}
+            </p>
           )}
         </div>
+
+        {/* Primary action — tappable state chip */}
+        {stateLabel && phase === 'landing' && (
+          <button
+            onClick={() => setPhase('naming')}
+            style={{
+              display:      'inline-flex',
+              alignItems:   'center',
+              alignSelf:    'flex-start',
+              padding:      '10px 22px',
+              borderRadius: '999px',
+              background:   '#1A1A18',
+              color:        '#FFFFFF',
+              fontSize:     '15px',
+              fontWeight:   500,
+              border:       'none',
+              cursor:       'pointer',
+              letterSpacing: '-0.01em',
+            }}
+          >
+            {stateLabel}
+          </button>
+        )}
+
+        {/* Naming phase — appears after tapping the chip */}
+        {(phase === 'naming' || (!stateLabel && phase === 'landing')) && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {dupCandidate ? (
+              <>
+                <p style={{ fontSize: '13px', color: '#6B7280', margin: 0 }}>
+                  <strong>{dupCandidate.display_name}</strong> already exists here. That you?
+                </p>
+                <button
+                  onClick={handleRejoin}
+                  disabled={joining}
+                  style={{
+                    padding: '11px 0', borderRadius: '12px',
+                    background: '#1A1A18', color: '#FFFFFF',
+                    fontSize: '14px', fontWeight: 500, border: 'none',
+                    cursor: joining ? 'default' : 'pointer', opacity: joining ? 0.5 : 1,
+                  }}
+                >
+                  {joining ? 'Joining…' : `Yes, that's me`}
+                </button>
+                <button
+                  onClick={() => setDupCandidate(null)}
+                  style={{
+                    padding: '11px 0', borderRadius: '12px',
+                    background: 'none', color: '#9A948E',
+                    fontSize: '13px', border: '1px solid #E5E2DE', cursor: 'pointer',
+                  }}
+                >
+                  Different person
+                </button>
+              </>
+            ) : (
+              <>
+                <input
+                  autoFocus
+                  type="text"
+                  value={memberName}
+                  onChange={e => setMemberName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && memberName.trim() && doJoin(memberName, stateLabel)}
+                  placeholder="Your name"
+                  style={{
+                    fontSize: '16px', color: '#1C1814',
+                    background: '#F4F1EC', border: 'none',
+                    borderRadius: '12px', padding: '12px 16px',
+                    outline: 'none', width: '100%', boxSizing: 'border-box',
+                  }}
+                />
+                {error && <p style={{ fontSize: '12px', color: '#EF4444', margin: 0 }}>{error}</p>}
+                <button
+                  onClick={() => doJoin(memberName, stateLabel)}
+                  disabled={!memberName.trim() || joining}
+                  style={{
+                    padding: '12px 0', borderRadius: '12px',
+                    background: '#1A1A18', color: '#FFFFFF',
+                    fontSize: '15px', fontWeight: 500, border: 'none',
+                    cursor: memberName.trim() && !joining ? 'pointer' : 'default',
+                    opacity: memberName.trim() && !joining ? 1 : 0.35,
+                    transition: 'opacity 150ms',
+                  }}
+                >
+                  {joining ? 'Joining…' : stateLabel ? `Join · ${stateLabel}` : 'Join'}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
       </div>
-    </main>
+    </div>
   )
 }
