@@ -7,8 +7,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: 'Know what\'s happening without asking.',
     start_url: '/',
     display: 'standalone',
-    background_color: '#ffffff',
-    theme_color: '#ffffff',
+    background_color: '#F5F3EF',
+    theme_color: '#F5F3EF',
     icons: [
       {
         src: '/icon-192.png',

@@ -1,10 +1,10 @@
 {
   "name": "Glanceable",
-  "short_name": "Glance",
+  "short_name": "Glanceable",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#ffffff",
+  "background_color": "#F5F3EF",
+  "theme_color": "#F5F3EF",
   "icons": [
     {
       "src": "/icon-192.png",

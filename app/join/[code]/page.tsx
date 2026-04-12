@@ -9,7 +9,7 @@ import type { Space, Event, Member } from '@/lib/types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Phase = 'loading' | 'landing' | 'naming' | 'joined' | 'not_found'
+type Phase = 'loading' | 'landing' | 'naming' | 'not_found'
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -29,12 +29,6 @@ export default function JoinPage() {
   const [memberName,   setMemberName]   = useState('')
   const [joining,      setJoining]      = useState(false)
   const [error,        setError]        = useState('')
-
-  // Post-join
-  const [yourName,     setYourName]     = useState('')
-  const [showFeedback, setShowFeedback] = useState(false)
-  const [showInstall,  setShowInstall]  = useState(false)
-
 
   // Duplicate handling (kept inline, minimal)
   const [dupCandidate, setDupCandidate] = useState<Member | null>(null)
@@ -137,13 +131,7 @@ export default function JoinPage() {
       return
     }
 
-    setYourName(name.trim())
-    setJoining(false)
-    setPhase('joined')
-    setShowFeedback(true)
-
-    // Navigate to the full board after a brief confirmation moment
-    setTimeout(() => router.replace(`/space/${space.id}`), 1500)
+    router.replace(`/space/${space.id}`)
   }
 
   async function handleRejoin() {
@@ -151,14 +139,7 @@ export default function JoinPage() {
     setJoining(true)
     const browserId = getBrowserId()
     await supabase.from('members').update({ browser_id: browserId }).eq('id', dupCandidate.id)
-    setYourName(dupCandidate.display_name)
-    setJoining(false)
-    setDupCandidate(null)
-    setPhase('joined')
-    setShowFeedback(true)
-
-    // Navigate to the full board after a brief confirmation moment
-    setTimeout(() => router.replace(`/space/${space.id}`), 1500)
+    router.replace(`/space/${space.id}`)
   }
 
   // ─── Shared styles ─────────────────────────────────────────────────────────
@@ -193,83 +174,6 @@ export default function JoinPage() {
     return (
       <div style={PAGE}>
         <p style={{ color: '#9CA3AF', fontSize: '14px' }}>This link is no longer active.</p>
-      </div>
-    )
-  }
-
-  // ─── Joined ────────────────────────────────────────────────────────────────
-
-  if (phase === 'joined') {
-    const count = members.length + 1  // inviter + you
-    return (
-      <div style={PAGE}>
-        <div style={WRAP}>
-
-          {/* State with count */}
-          <div>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{
-                display: 'inline-flex', alignItems: 'center',
-                padding: '8px 20px', borderRadius: '999px',
-                background: '#1A1A18', color: '#FFFFFF',
-                fontSize: '16px', fontWeight: 500,
-              }}>
-                {stateLabel || 'Here'}
-              </span>
-              <span style={{ color: '#B0ABA4', fontSize: '14px' }}>· {count}</span>
-            </div>
-
-            {/* "You joined" feedback */}
-            <p style={{
-              marginTop: '10px', fontSize: '13px',
-              color: showFeedback ? '#6B7280' : 'transparent',
-              transition: 'color 600ms ease',
-            }}>
-              You joined
-            </p>
-          </div>
-
-          {/* Both users in CURRENT format */}
-          {stateLabel && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {inviterName && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <span style={{ fontSize: '14px', color: '#3A3530' }}>{inviterName}</span>
-                  <span style={{ fontSize: '13px', color: '#9A948E' }}>{stateLabel}</span>
-                </div>
-              )}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                <span style={{ fontSize: '14px', color: '#3A3530' }}>{yourName}</span>
-                <span style={{ fontSize: '13px', color: '#9A948E' }}>{stateLabel}</span>
-              </div>
-            </div>
-          )}
-
-          {/* PWA nudge */}
-          {showInstall && (
-            <p style={{ fontSize: '12px', color: '#B0ABA4', marginTop: '8px' }}>
-              Keep sharing moments like this —{' '}
-              <button
-                onClick={() => {
-                  localStorage.setItem('pwa-prompt-dismissed', '1')
-                  setShowInstall(false)
-                }}
-                style={{ background: 'none', border: 'none', padding: 0, color: '#B0ABA4', fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' }}
-              >
-                add to home screen
-              </button>
-            </p>
-          )}
-
-          {/* Link into the full space */}
-          <a
-            href={`/space/${space.id}`}
-            style={{ fontSize: '12px', color: '#C4C0B8', textDecoration: 'none' }}
-          >
-            Open {space.name} →
-          </a>
-
-        </div>
       </div>
     )
   }
