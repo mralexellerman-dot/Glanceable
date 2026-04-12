@@ -1402,7 +1402,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                     return (
                     <button
                       key={chip.label}
-                      onClick={() => { setCustomText(chip.label); customInputRef.current?.focus() }}
+                      onClick={() => tapIn(chip.emoji, chip.label)}
                       style={{
                         display:      'inline-flex',
                         alignItems:   'center',
