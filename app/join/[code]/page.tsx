@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { getBrowserId } from '@/lib/memberships'
@@ -34,7 +34,7 @@ export default function JoinPage() {
   const [yourName,     setYourName]     = useState('')
   const [showFeedback, setShowFeedback] = useState(false)
   const [showInstall,  setShowInstall]  = useState(false)
-  const feedbackTimer                   = useRef<ReturnType<typeof setTimeout> | null>(null)
+
 
   // Duplicate handling (kept inline, minimal)
   const [dupCandidate, setDupCandidate] = useState<Member | null>(null)
@@ -141,14 +141,9 @@ export default function JoinPage() {
     setJoining(false)
     setPhase('joined')
     setShowFeedback(true)
-    feedbackTimer.current = setTimeout(() => setShowFeedback(false), 2200)
 
-    // PWA nudge after a beat
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
-      (navigator as any).standalone === true
-    if (!isStandalone && !localStorage.getItem('pwa-prompt-dismissed')) {
-      setTimeout(() => setShowInstall(true), 1800)
-    }
+    // Navigate to the full board after a brief confirmation moment
+    setTimeout(() => router.replace(`/space/${space.id}`), 1500)
   }
 
   async function handleRejoin() {
@@ -161,7 +156,9 @@ export default function JoinPage() {
     setDupCandidate(null)
     setPhase('joined')
     setShowFeedback(true)
-    feedbackTimer.current = setTimeout(() => setShowFeedback(false), 2200)
+
+    // Navigate to the full board after a brief confirmation moment
+    setTimeout(() => router.replace(`/space/${space.id}`), 1500)
   }
 
   // ─── Shared styles ─────────────────────────────────────────────────────────

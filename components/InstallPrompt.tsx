@@ -17,8 +17,9 @@ export default function InstallPrompt() {
       (navigator as any).standalone === true
     if (isStandalone) return
 
-    // User already dismissed — don't show again across sessions.
-    if (localStorage.getItem(DISMISSED_KEY)) return
+    // User already dismissed — hide for 7 days.
+    const dismissedAt = localStorage.getItem(DISMISSED_KEY)
+    if (dismissedAt && Date.now() - Number(dismissedAt) < 7 * 24 * 60 * 60 * 1000) return
 
     // Chrome/Android: capture the native install prompt.
     const handler = (e: Event) => {
@@ -36,7 +37,7 @@ export default function InstallPrompt() {
   }, [])
 
   function dismiss() {
-    localStorage.setItem(DISMISSED_KEY, '1')
+    localStorage.setItem(DISMISSED_KEY, String(Date.now()))
     setShow(false)
     setShowSafari(false)
   }
