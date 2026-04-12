@@ -83,6 +83,23 @@ const STATE_EMOJI: Record<string, string> = {
   'Coffee':      '☕',
 }
 
+// Emotion modifier chips — secondary layer, always lowercase
+const EMOTION_CHIPS = ['good', 'calm', 'stressed', 'quiet', 'tired']
+const EMOTION_SET   = new Set(EMOTION_CHIPS)
+
+// Parse "Working · stressed" → { primary: "Working", emotion: "stressed" }
+// Only recognises known emotions so free-text labels with · are left intact
+function parseCompositeState(label: string): { primary: string; emotion: string | null } {
+  const sepIdx = label.lastIndexOf(' · ')
+  if (sepIdx !== -1) {
+    const tail = label.slice(sepIdx + 3)
+    if (EMOTION_SET.has(tail.toLowerCase())) {
+      return { primary: label.slice(0, sepIdx), emotion: tail }
+    }
+  }
+  return { primary: label, emotion: null }
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function relativeTime(dateStr: string, now: number = Date.now()): string {
@@ -489,6 +506,8 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const [optimisticEvents, setOptimisticEvents] = useState<Event[]>([])
   const [upcoming,         setUpcoming]         = useState<Upcoming[]>([])
   const [loading,          setLoading]          = useState(true)
+  const [lastSeenAt,        setLastSeenAt]        = useState<number | null>(null)
+  const [newIndicatorActive, setNewIndicatorActive] = useState(false)
 
   // Add event sheet
   const [showAdd,          setShowAdd]          = useState(false)
@@ -631,6 +650,19 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   // Weather — one fetch per session, silent failure
   useEffect(() => {
     getWeatherCondition().then(setWeather)
+  }, [])
+
+  // Last-seen tracking — highlight items newer than the previous session's open time
+  useEffect(() => {
+    const stored = localStorage.getItem('dw_last_seen')
+    const prev   = stored ? parseInt(stored, 10) : null
+    localStorage.setItem('dw_last_seen', String(Date.now()))
+    if (prev) {
+      setLastSeenAt(prev)
+      setNewIndicatorActive(true)
+      const t = setTimeout(() => setNewIndicatorActive(false), 2500)
+      return () => clearTimeout(t)
+    }
   }, [])
 
   // Load nudge disabled flag from localStorage
@@ -893,9 +925,20 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
   async function copyInviteLink() {
     if (!space) return
-    await navigator.clipboard.writeText(`${window.location.origin}/join/${space.invite_code}`)
+    const link         = `${window.location.origin}/join/${space.invite_code}`
+    const stateLabel   = latestActivityByMemberId.get(activeMemberId)?.label
+    const message      = stateLabel ? `${stateLabel}.\n\n${link}` : link
+
+    try {
+      if (navigator.share) {
+        await navigator.share({ text: message })
+        return
+      }
+    } catch {}
+
+    await navigator.clipboard.writeText(message)
     setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    setTimeout(() => setCopied(false), 1000)
   }
 
   async function regenerateInvite() {
@@ -1140,6 +1183,48 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const dividerColor = interpColor('#EDE9E3', '#E8DFD5', warmth)
   const mutedText = interpColor('#9CA3AF', '#B5A896', warmth)
 
+  // Returns true if a timestamp qualifies as "new since last visit"
+  const isNew = (ts: string | null | undefined): boolean => {
+    if (!newIndicatorActive || !lastSeenAt || !ts) return false
+    return new Date(ts).getTime() > lastSeenAt
+  }
+
+  // Transition summary — "Moved through: Working → Driving → Dinner"
+  // Finds the member with the richest distinct-state chain since last visit
+  const transitionSummary: string | null = (() => {
+    if (!lastSeenAt || combinedEvents.length === 0) return null
+
+    // Chronological events since last visit (combinedEvents is newest-first, so reverse)
+    const recent = combinedEvents
+      .filter(e => e.member_id && new Date(e.created_at).getTime() > lastSeenAt)
+      .slice()
+      .reverse()
+
+    if (recent.length === 0) return null
+
+    // Build per-member chains, deduping consecutive identical primaries
+    const byMember = new Map<string, string[]>()
+    for (const e of recent) {
+      const mid   = e.member_id!
+      const label = parseCompositeState(e.label).primary.trim()
+      if (!label) continue
+      const chain = byMember.get(mid) ?? []
+      if (chain.length === 0 || chain[chain.length - 1].toLowerCase() !== label.toLowerCase()) {
+        chain.push(label)
+      }
+      byMember.set(mid, chain)
+    }
+
+    // Pick the member with the longest chain of 2+ states
+    let best: string[] = []
+    for (const chain of byMember.values()) {
+      if (chain.length >= 2 && chain.length > best.length) best = chain
+    }
+
+    if (best.length < 2) return null
+    return `Moved through: ${best.slice(0, 3).join(' → ')}`
+  })()
+
   // ─── Render ─────────────────────────────────────────────────────────────────
 
   if (loading) return (
@@ -1185,6 +1270,19 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
             {displaySummary}
           </p>
         </header>
+
+        {/* ── TRANSITION SUMMARY ───────────────────────────────────────────── */}
+        <div className="px-5" style={{
+          height:     newIndicatorActive && transitionSummary ? '20px' : '0',
+          overflow:   'hidden',
+          opacity:    newIndicatorActive && transitionSummary ? 1 : 0,
+          transition: 'height 500ms ease, opacity 500ms ease',
+          marginBottom: newIndicatorActive && transitionSummary ? '2px' : '0',
+        }}>
+          <p style={{ fontSize: '12px', color: '#B0ABA4', margin: 0, fontStyle: 'italic' }}>
+            {transitionSummary}
+          </p>
+        </div>
 
         {/* ── NUDGE BAR ─────────────────────────────────────────────────────── */}
         {nudge && !nudgesDisabled && (
@@ -1294,9 +1392,22 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                           style={{ fontSize: soloEmphasis ? '15px' : '12px', color: soloEmphasis ? '#374151' : (isMe ? '#6B7280' : '#9CA3AF'), fontWeight: soloEmphasis ? 500 : 400, marginTop: soloEmphasis ? '3px' : '2px', marginLeft: '0', cursor: canJoinActivity ? 'pointer' : 'default' }}
                           className={canJoinActivity ? 'hover:opacity-75 hover:underline active:scale-[0.98] transition' : ''}
                         >
-                          {recentActivity.emoji && <span>{recentActivity.emoji} </span>}
-                          <span>{recentActivity.label}</span>
-                          {joinedFeedback === m.id && <span style={{ color: '#C4C0B8', marginLeft: '6px' }}>joined</span>}
+                          {(() => {
+                            const { primary, emotion } = parseCompositeState(recentActivity.label)
+                            return (
+                              <>
+                                {recentActivity.emoji && <span>{recentActivity.emoji} </span>}
+                                <span>{primary}</span>
+                                {emotion && (
+                                  <span style={{ color: soloEmphasis ? '#6B7280' : '#B0ABA4', fontWeight: 400 }}> · {emotion}</span>
+                                )}
+                                {isNew(recentActivity.created_at) && (
+                                  <span style={{ color: '#C4C0B8', marginLeft: '5px', fontSize: '10px', lineHeight: 1 }}>•</span>
+                                )}
+                                {joinedFeedback === m.id && <span style={{ color: '#C4C0B8', marginLeft: '6px' }}>joined</span>}
+                              </>
+                            )
+                          })()}
                         </p>
                       )}
                       {isMe && echoLabel && (
@@ -1331,7 +1442,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
             <button
               onClick={async () => {
                 const link = `${window.location.origin}/join/${space.invite_code}`
-                const msg  = `I'm ${momentInviteLabel.toLowerCase()}.\nYou can see what I'm in here:\n${link}`
+                const msg  = `${momentInviteLabel}.\n\n${link}`
                 try {
                   if (navigator.share) {
                     await navigator.share({ text: msg })
@@ -1408,46 +1519,109 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
               {tapInFeedback ? (
                 <p style={{ fontSize: '14px', color: '#4A453F' }}>✓ {tapInFeedback}</p>
               ) : (
+                <>
                 <div className="flex flex-wrap gap-1.5">
-                  {activityChips.map(chip => {
-                    const count = members.filter(m =>
-                      latestActivityByMemberId.get(m.id)?.label.trim().toLowerCase() === chip.label.trim().toLowerCase()
-                    ).length
-                    const isShared  = count >= 2
-                    const isFlashed = flashedChip === chip.label
-                    const displayEmoji = STATE_EMOJI[chip.label] ?? chip.emoji
-                    return (
-                    <button
-                      key={chip.label}
-                      className="dw-chip"
-                      onClick={() => {
-                        tapIn(chip.emoji, chip.label)
-                        setFlashedChip(chip.label)
-                        setTimeout(() => setFlashedChip(null), 300)
-                      }}
-                      style={{
-                        display:      'inline-flex',
-                        alignItems:   'center',
-                        padding:      '4px 12px',
-                        borderRadius: '999px',
-                        background:   isFlashed ? '#E4DFD8' : '#F4F1EC',
-                        fontSize:     '13px',
-                        color:        isShared ? '#1A1A18' : '#3A3630',
-                        fontWeight:   isShared ? 500 : 400,
-                        border:       'none',
-                        cursor:       'pointer',
-                      }}
-                    >
-                      {displayEmoji ? `${displayEmoji} ${chip.label}` : chip.label}
-                      {count >= 1 && (
-                        <span style={{ color: isShared ? '#6B7280' : '#9CA3AF', marginLeft: '4px', fontWeight: 400 }}>
-                          · {count}
-                        </span>
-                      )}
-                    </button>
-                    )
-                  })}
+                  {(() => {
+                    const myLabel   = latestActivityByMemberId.get(activeMemberId)?.label ?? ''
+                    const { primary: myPrimary } = parseCompositeState(myLabel)
+                    return activityChips.map(chip => {
+                      // count by primary state only, ignoring emotion suffix
+                      const count = members.filter(m => {
+                        const lbl = latestActivityByMemberId.get(m.id)?.label ?? ''
+                        return parseCompositeState(lbl).primary.trim().toLowerCase() === chip.label.trim().toLowerCase()
+                      }).length
+                      const isShared  = count >= 2
+                      const isFlashed = flashedChip === chip.label
+                      const isActive  = myPrimary.trim().toLowerCase() === chip.label.trim().toLowerCase()
+                      const displayEmoji = STATE_EMOJI[chip.label] ?? chip.emoji
+                      return (
+                        <button
+                          key={chip.label}
+                          className="dw-chip"
+                          onClick={() => {
+                            // Preserve existing emotion when switching primary state
+                            const cur = latestActivityByMemberId.get(activeMemberId)?.label ?? ''
+                            const { emotion } = parseCompositeState(cur)
+                            const composed = emotion ? `${chip.label} · ${emotion}` : chip.label
+                            tapIn(chip.emoji, composed)
+                            setFlashedChip(chip.label)
+                            setTimeout(() => setFlashedChip(null), 300)
+                          }}
+                          style={{
+                            display:      'inline-flex',
+                            alignItems:   'center',
+                            padding:      '4px 12px',
+                            borderRadius: '999px',
+                            background:   isFlashed ? '#E4DFD8' : isActive ? '#E8E4DC' : '#F4F1EC',
+                            fontSize:     '13px',
+                            color:        isShared ? '#1A1A18' : '#3A3630',
+                            fontWeight:   isShared || isActive ? 500 : 400,
+                            border:       'none',
+                            cursor:       'pointer',
+                          }}
+                        >
+                          {displayEmoji ? `${displayEmoji} ${chip.label}` : chip.label}
+                          {count >= 1 && (
+                            <span style={{ color: isShared ? '#6B7280' : '#9CA3AF', marginLeft: '4px', fontWeight: 400 }}>
+                              · {count}
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })
+                  })()}
                 </div>
+
+                {/* ── Emotion chips ── */}
+                {activeMemberId && (() => {
+                  const myLabel = latestActivityByMemberId.get(activeMemberId)?.label ?? ''
+                  const { emotion: myEmotion } = parseCompositeState(myLabel)
+                  return (
+                    <div className="flex flex-wrap gap-1.5" style={{ marginTop: '6px' }}>
+                      {EMOTION_CHIPS.map(emo => {
+                        const isActive  = myEmotion?.toLowerCase() === emo
+                        const isFlashed = flashedChip === emo
+                        return (
+                          <button
+                            key={emo}
+                            className="dw-chip"
+                            onClick={() => {
+                              const cur = latestActivityByMemberId.get(activeMemberId)?.label ?? ''
+                              const { primary } = parseCompositeState(cur)
+                              // Toggle off if same emotion; otherwise set/replace
+                              const composed = isActive
+                                ? (primary || '')
+                                : (primary ? `${primary} · ${emo}` : emo)
+                              if (composed) {
+                                tapIn('', composed)
+                              }
+                              if (!isActive) {
+                                setFlashedChip(emo)
+                                setTimeout(() => setFlashedChip(null), 300)
+                              }
+                            }}
+                            style={{
+                              display:      'inline-flex',
+                              alignItems:   'center',
+                              padding:      '3px 11px',
+                              borderRadius: '999px',
+                              background:   isFlashed ? '#E4DFD8' : isActive ? '#EAE6E0' : '#F4F1EC',
+                              fontSize:     '12px',
+                              color:        isActive ? '#4A453F' : '#7A7470',
+                              fontStyle:    'italic',
+                              fontWeight:   isActive ? 500 : 400,
+                              border:       isActive ? '1px solid #D5D0CA' : '1px solid transparent',
+                              cursor:       'pointer',
+                            }}
+                          >
+                            {emo}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
+                </>
               )}
               {!tapInFeedback && (
                 <form
@@ -1601,7 +1775,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
           <section className="px-5 py-4 lg:py-3">
             <Label>Today</Label>
             {todayEvents.map(({ event: e, count }, i) => (
-              <EventRow key={e.id} event={e} count={count} activeMemberId={activeMemberId} onDelete={deleteEvent} isFirst={i === 0} tick={tick} nowMs={nowMs} />
+              <EventRow key={e.id} event={e} count={count} activeMemberId={activeMemberId} onDelete={deleteEvent} isFirst={i === 0} tick={tick} nowMs={nowMs} isNew={isNew(e.created_at)} />
             ))}
           </section>
         )}
@@ -1647,7 +1821,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                 padding:    0,
               }}
             >
-              {copied ? '✓ Link copied' : 'Invite someone to share this space →'}
+              {copied ? 'Copied' : 'Invite someone to share this space →'}
             </button>
           </div>
         )}
@@ -1682,7 +1856,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
               className="text-xs underline"
               style={{ color: copied ? '#4A9' : '#C4C0B8' }}
             >
-              {copied ? 'Copied!' : 'Copy invite link'}
+              {copied ? 'Copied' : 'Copy invite link'}
             </button>
             {isOwner && (
               <button onClick={regenerateInvite} className="text-xs" style={{ color: '#D0CCCA', border: 'none', background: 'none', cursor: 'pointer' }}>
@@ -1874,9 +2048,10 @@ interface EventRowProps {
   isFirst?: boolean
   tick?: number
   nowMs?: number
+  isNew?: boolean
 }
 
-function EventRow({ event, count, activeMemberId, onDelete, isFirst, tick, nowMs }: EventRowProps) {
+function EventRow({ event, count, activeMemberId, onDelete, isFirst, tick, nowMs, isNew }: EventRowProps) {
   const now = nowMs ?? 0
   const canDelete = !!activeMemberId
     && event.member_id === activeMemberId
@@ -1893,6 +2068,7 @@ function EventRow({ event, count, activeMemberId, onDelete, isFirst, tick, nowMs
           <span className="text-sm leading-snug" style={{ color: '#1f2937', fontWeight: isFirst ? 500 : 400 }}>
             {event.label}
             {count && count > 1 && <span style={{ color: '#9CA3AF', fontWeight: 400, marginLeft: '4px' }}>· {count}</span>}
+            {isNew && <span style={{ color: '#C4C0B8', marginLeft: '5px', fontSize: '10px', lineHeight: 1 }}>•</span>}
           </span>
           {event.note && (
             <p className="text-xs mt-0.5 truncate" style={{ color: '#B8B4AC' }}>{event.note}</p>
