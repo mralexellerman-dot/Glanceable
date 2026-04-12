@@ -70,6 +70,19 @@ const SIGNAL_GROUPS = [
 
 const ALL_PRESETS = SIGNAL_GROUPS.flatMap(g => g.signals)
 
+const STATE_EMOJI: Record<string, string> = {
+  'Working':     '💻',
+  'Relaxing':    '😌',
+  'Out':         '🚗',
+  'Home':        '🏠',
+  'Sleep soon':  '😴',
+  'Dinner':      '🍝',
+  'Lunch':       '🥪',
+  'Wrapping up': '🧹',
+  'On the way':  '🚶',
+  'Coffee':      '☕',
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function relativeTime(dateStr: string, now: number = Date.now()): string {
@@ -493,6 +506,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const [logExpanded,         setLogExpanded]         = useState(false)
   const [suggestionsExpanded, setSuggestionsExpanded] = useState(false)
   const [tapInFeedback,       setTapInFeedback]       = useState<string | null>(null)
+  const [flashedChip,         setFlashedChip]         = useState<string | null>(null)
   const [tappedState,         setTappedState]         = useState<string | null>(null)
   const [hasJoinedState,      setHasJoinedState]      = useState(() => {
     try { return !!localStorage.getItem('glanceable_joined_once') } catch { return false }
@@ -1399,24 +1413,37 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                     const count = members.filter(m =>
                       latestActivityByMemberId.get(m.id)?.label.trim().toLowerCase() === chip.label.trim().toLowerCase()
                     ).length
+                    const isShared  = count >= 2
+                    const isFlashed = flashedChip === chip.label
+                    const displayEmoji = STATE_EMOJI[chip.label] ?? chip.emoji
                     return (
                     <button
                       key={chip.label}
-                      onClick={() => tapIn(chip.emoji, chip.label)}
+                      className="dw-chip"
+                      onClick={() => {
+                        tapIn(chip.emoji, chip.label)
+                        setFlashedChip(chip.label)
+                        setTimeout(() => setFlashedChip(null), 300)
+                      }}
                       style={{
                         display:      'inline-flex',
                         alignItems:   'center',
                         padding:      '4px 12px',
                         borderRadius: '999px',
-                        background:   '#F4F1EC',
+                        background:   isFlashed ? '#E4DFD8' : '#F4F1EC',
                         fontSize:     '13px',
-                        color:        '#3A3630',
+                        color:        isShared ? '#1A1A18' : '#3A3630',
+                        fontWeight:   isShared ? 500 : 400,
                         border:       'none',
                         cursor:       'pointer',
                       }}
                     >
-                      {chip.emoji ? `${chip.emoji} ${chip.label}` : chip.label}
-                      {count >= 1 && <span style={{ color: '#9CA3AF', marginLeft: '4px' }}>· {count}</span>}
+                      {displayEmoji ? `${displayEmoji} ${chip.label}` : chip.label}
+                      {count >= 1 && (
+                        <span style={{ color: isShared ? '#6B7280' : '#9CA3AF', marginLeft: '4px', fontWeight: 400 }}>
+                          · {count}
+                        </span>
+                      )}
                     </button>
                     )
                   })}
