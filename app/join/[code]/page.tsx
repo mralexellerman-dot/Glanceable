@@ -290,6 +290,9 @@ export default function JoinPage() {
               {stateLabel}
             </p>
           )}
+          {stateLabel && phase === 'landing' && (
+            <p style={{ fontSize: '13px', color: '#B0ABA4', margin: 0, marginTop: '2px' }}>Right now?</p>
+          )}
         </div>
 
         {/* Primary action — tappable state chip */}

@@ -538,9 +538,10 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const [simulatedJoinLabel,  setSimulatedJoinLabel]  = useState<string | null>(null)
   const [joinedFeedback,      setJoinedFeedback]      = useState<string | null>(null) // member id whose state was just joined
   const [echoLabel,           setEchoLabel]           = useState<string | null>(null) // transient echo of own last tap
-  const [echoFading,          setEchoFading]          = useState(false)
-  const echoTimer             = useRef<ReturnType<typeof setTimeout> | null>(null)
   const echoFadeTimer         = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [traceActive,         setTraceActive]         = useState(false)
+  const traceStarted          = useRef(false)
+  const traceTimerRef         = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [customText,          setCustomText]          = useState('')
 
   const recentTaps = useRef<Map<string, number>>(new Map())
@@ -660,10 +661,25 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
     if (prev) {
       setLastSeenAt(prev)
       setNewIndicatorActive(true)
-      const t = setTimeout(() => setNewIndicatorActive(false), 2500)
+      const t = setTimeout(() => setNewIndicatorActive(false), 2800)
       return () => clearTimeout(t)
     }
   }, [])
+
+  // Trigger motion trace once — fires when initial load completes
+  useEffect(() => {
+    if (loading || traceStarted.current || !lastSeenAt) return
+    traceStarted.current = true
+    const hasNewEvents = combinedEvents.some(
+      e => e.member_id && new Date(e.created_at).getTime() > lastSeenAt
+    )
+    if (!hasNewEvents) return
+    setTraceActive(true)
+    traceTimerRef.current = setTimeout(() => setTraceActive(false), 3100)
+    return () => { if (traceTimerRef.current) clearTimeout(traceTimerRef.current) }
+  // combinedEvents intentionally omitted — we only want this on the first load completion
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, lastSeenAt])
 
   // Load nudge disabled flag from localStorage
   useEffect(() => {
@@ -800,11 +816,8 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
     // Echo moment — briefly show the tapped label near the user's own CURRENT row
     setEchoLabel(label)
-    setEchoFading(false)
-    if (echoTimer.current) clearTimeout(echoTimer.current)
     if (echoFadeTimer.current) clearTimeout(echoFadeTimer.current)
-    echoTimer.current = setTimeout(() => setEchoFading(true), 1500)
-    echoFadeTimer.current = setTimeout(() => { setEchoLabel(null); setEchoFading(false) }, 2100)
+    echoFadeTimer.current = setTimeout(() => setEchoLabel(null), 1900)
 
     // First-run onboarding: show a simulated "Partner just joined" ghost row for 3s
     // Only when solo (no other real members) and onboarding not yet seen
@@ -1273,15 +1286,17 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
         {/* ── TRANSITION SUMMARY ───────────────────────────────────────────── */}
         <div className="px-5" style={{
-          height:     newIndicatorActive && transitionSummary ? '20px' : '0',
+          height:     traceActive && transitionSummary ? '20px' : '0',
           overflow:   'hidden',
-          opacity:    newIndicatorActive && transitionSummary ? 1 : 0,
-          transition: 'height 500ms ease, opacity 500ms ease',
-          marginBottom: newIndicatorActive && transitionSummary ? '2px' : '0',
+          transition: 'height 320ms ease-in-out',
+          marginBottom: traceActive && transitionSummary ? '2px' : '0',
         }}>
-          <p style={{ fontSize: '12px', color: '#B0ABA4', margin: 0, fontStyle: 'italic' }}>
-            {transitionSummary}
-          </p>
+          {traceActive && transitionSummary && (
+            <p style={{ fontSize: '12px', color: '#B0ABA4', margin: 0, fontStyle: 'italic',
+                        animation: 'dw-trace-show 3100ms ease-in-out forwards' }}>
+              {transitionSummary}
+            </p>
+          )}
         </div>
 
         {/* ── NUDGE BAR ─────────────────────────────────────────────────────── */}
@@ -1389,7 +1404,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                             setJoinedFeedback(m.id)
                             setTimeout(() => setJoinedFeedback(null), 1000)
                           } : undefined}
-                          style={{ fontSize: soloEmphasis ? '15px' : '12px', color: soloEmphasis ? '#374151' : (isMe ? '#6B7280' : '#9CA3AF'), fontWeight: soloEmphasis ? 500 : 400, marginTop: soloEmphasis ? '3px' : '2px', marginLeft: '0', cursor: canJoinActivity ? 'pointer' : 'default' }}
+                          style={{ fontSize: soloEmphasis ? '15px' : '13px', color: soloEmphasis ? '#374151' : (isMe ? '#4A453F' : '#6B7280'), fontWeight: soloEmphasis ? 500 : 400, marginTop: soloEmphasis ? '3px' : '2px', marginLeft: '0', cursor: canJoinActivity ? 'pointer' : 'default' }}
                           className={canJoinActivity ? 'hover:opacity-75 hover:underline active:scale-[0.98] transition' : ''}
                         >
                           {(() => {
@@ -1402,7 +1417,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                                   <span style={{ color: soloEmphasis ? '#6B7280' : '#B0ABA4', fontWeight: 400 }}> · {emotion}</span>
                                 )}
                                 {isNew(recentActivity.created_at) && (
-                                  <span style={{ color: '#C4C0B8', marginLeft: '5px', fontSize: '10px', lineHeight: 1 }}>•</span>
+                                  <span style={{ color: '#C4C0B8', marginLeft: '5px', fontSize: '10px', lineHeight: 1, animation: 'dw-dot-fade 2800ms ease-out forwards' }}>•</span>
                                 )}
                                 {joinedFeedback === m.id && <span style={{ color: '#C4C0B8', marginLeft: '6px' }}>joined</span>}
                               </>
@@ -1411,7 +1426,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                         </p>
                       )}
                       {isMe && echoLabel && (
-                        <div style={{ marginTop: '2px', opacity: echoFading ? 0 : 1, transition: 'opacity 500ms ease' }}>
+                        <div style={{ marginTop: '2px', animation: 'dw-echo-show 1900ms ease-in-out forwards' }}>
                           {echoLabel !== recentActivity?.label && (
                             <p style={{ fontSize: soloEmphasis ? '14px' : '12px', color: soloEmphasis ? '#374151' : '#6B7280', fontWeight: soloEmphasis ? 500 : 400, margin: 0 }}>{echoLabel}</p>
                           )}
@@ -1483,11 +1498,8 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                       setTimeout(() => setTappedState(null), 250)
                       // Echo moment for presence tap
                       setEchoLabel(chip.label)
-                      setEchoFading(false)
-                      if (echoTimer.current) clearTimeout(echoTimer.current)
                       if (echoFadeTimer.current) clearTimeout(echoFadeTimer.current)
-                      echoTimer.current = setTimeout(() => setEchoFading(true), 1500)
-                      echoFadeTimer.current = setTimeout(() => { setEchoLabel(null); setEchoFading(false) }, 2100)
+                      echoFadeTimer.current = setTimeout(() => setEchoLabel(null), 1900)
                     }}
                     style={{
                       display:      'inline-flex',
@@ -2068,7 +2080,7 @@ function EventRow({ event, count, activeMemberId, onDelete, isFirst, tick, nowMs
           <span className="text-sm leading-snug" style={{ color: '#1f2937', fontWeight: isFirst ? 500 : 400 }}>
             {event.label}
             {count && count > 1 && <span style={{ color: '#9CA3AF', fontWeight: 400, marginLeft: '4px' }}>· {count}</span>}
-            {isNew && <span style={{ color: '#C4C0B8', marginLeft: '5px', fontSize: '10px', lineHeight: 1 }}>•</span>}
+            {isNew && <span style={{ color: '#C4C0B8', marginLeft: '5px', fontSize: '10px', lineHeight: 1, animation: 'dw-dot-fade 2800ms ease-out forwards' }}>•</span>}
           </span>
           {event.note && (
             <p className="text-xs mt-0.5 truncate" style={{ color: '#B8B4AC' }}>{event.note}</p>

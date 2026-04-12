@@ -1,13 +1,14 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import SpaceBoard from '@/components/SpaceBoard'
-import { getMemberForSpace, trackSpace, getBrowserId } from '@/lib/memberships'
+import { getMemberForSpace, trackSpace } from '@/lib/memberships'
 import { supabase } from '@/lib/supabase'
 
 export default function SpacePage() {
-  const params = useParams()
+  const params  = useParams()
+  const router  = useRouter()
   const spaceId = params.id as string
   const [memberId, setMemberId] = useState<string>('')
   const [ready, setReady] = useState(false)
@@ -21,20 +22,21 @@ export default function SpacePage() {
         setReady(true)
         return
       }
-      // Auto-join: new device visiting a shared /space/:id link
-      const browserId = getBrowserId()
-      if (browserId) {
-        const { data: inserted } = await supabase
-          .from('members')
-          .insert({ space_id: spaceId, browser_id: browserId, display_name: 'Guest', presence_state: 'tbd', role: 'member' })
-          .select('id')
-          .single()
-        setMemberId(inserted?.id ?? '')
+      // Not a member — send through the invite/join flow so they get a name
+      const { data: spaceData } = await supabase
+        .from('spaces')
+        .select('invite_code')
+        .eq('id', spaceId)
+        .single()
+      if (spaceData?.invite_code) {
+        router.replace(`/join/${spaceData.invite_code}`)
+      } else {
+        // Space not found — render SpaceBoard which will show an empty/error state
+        setReady(true)
       }
-      setReady(true)
     }
     init()
-  }, [spaceId])
+  }, [spaceId, router])
 
   if (!ready) return null
 

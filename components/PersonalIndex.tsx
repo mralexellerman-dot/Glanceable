@@ -5,10 +5,25 @@ import { supabase } from '@/lib/supabase'
 import { classifyEntry } from '@/lib/classify'
 import type { Event } from '@/lib/types'
 
+// Mirror of SpaceBoard's parseCompositeState — kept local to avoid coupling
+const EMOTION_SET_PI = new Set(['good', 'calm', 'stressed', 'quiet', 'tired'])
+
+function parsePrimaryAndEmotion(label: string): { primary: string; emotion: string | null } {
+  const sepIdx = label.lastIndexOf(' · ')
+  if (sepIdx !== -1) {
+    const tail = label.slice(sepIdx + 3)
+    if (EMOTION_SET_PI.has(tail.toLowerCase())) {
+      return { primary: label.slice(0, sepIdx), emotion: tail }
+    }
+  }
+  return { primary: label, emotion: null }
+}
+
 interface PIData {
   often:    string[]
   moments:  string[]
   together: { label: string; count: number }[]
+  emotions: string[]
 }
 
 function buildPI(events: Event[], activeMemberId: string): PIData | null {
@@ -20,14 +35,20 @@ function buildPI(events: Event[], activeMemberId: string): PIData | null {
     classifyEntry(e.label) === 'state'
   )
 
-  // Frequency count — personal only
+  // Frequency count — personal only, keyed on primary state (ignores emotion modifier)
   const personalCounts = new Map<string, number>()
+  const emotionCounts  = new Map<string, number>()
   const labelDisplay   = new Map<string, string>()
   for (const e of stateEvents) {
     if (e.member_id !== activeMemberId) continue
-    const key = e.label.trim().toLowerCase()
+    const { primary, emotion } = parsePrimaryAndEmotion(e.label.trim())
+    const key = primary.toLowerCase()
     personalCounts.set(key, (personalCounts.get(key) ?? 0) + 1)
-    if (!labelDisplay.has(key)) labelDisplay.set(key, e.label.trim())
+    if (!labelDisplay.has(key)) labelDisplay.set(key, primary)
+    if (emotion) {
+      const ek = emotion.toLowerCase()
+      emotionCounts.set(ek, (emotionCounts.get(ek) ?? 0) + 1)
+    }
   }
 
   if (personalCounts.size === 0) return null
@@ -36,8 +57,12 @@ function buildPI(events: Event[], activeMemberId: string): PIData | null {
     .sort((a, b) => b[1] - a[1])
     .map(([key, count]) => ({ key, count, label: labelDisplay.get(key) ?? key }))
 
-  const often   = ranked.slice(0, 3).map(r => r.label)
-  const moments = ranked.slice(3, 6).filter(r => r.count >= 1).map(r => r.label).slice(0, 3)
+  const often    = ranked.slice(0, 3).map(r => r.label)
+  const moments  = ranked.slice(3, 6).filter(r => r.count >= 1).map(r => r.label).slice(0, 3)
+  const emotions = [...emotionCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([key]) => key)
 
   // Shared states: 2+ distinct members within same 10-min bucket
   const buckets = new Map<string, Set<string>>()
@@ -60,7 +85,7 @@ function buildPI(events: Event[], activeMemberId: string): PIData | null {
     .slice(0, 3)
     .map(([key, count]) => ({ label: labelDisplay.get(key) ?? key, count }))
 
-  return { often, moments, together }
+  return { often, moments, together, emotions }
 }
 
 interface Props {
@@ -90,7 +115,7 @@ export default function PersonalIndex({ spaceId, activeMemberId }: Props) {
   if (!pi || pi.often.length === 0) return null
 
   const dim  = { color: '#B0ABA4', fontSize: '12px', margin: 0 } as const
-  const body = { color: '#3A3530', fontSize: '13px', lineHeight: '1.7', margin: 0 } as const
+  const body = { color: '#6B7280', fontSize: '13px', lineHeight: '1.7', margin: 0 } as const
 
   return (
     <section className="px-5 py-5">
@@ -120,6 +145,13 @@ export default function PersonalIndex({ spaceId, activeMemberId }: Props) {
                 {label}<span style={{ color: '#C4C0B8', marginLeft: '6px' }}>· {count}</span>
               </p>
             ))}
+          </div>
+        )}
+
+        {pi.emotions.length > 0 && (
+          <div>
+            <p style={dim}>Mood this week:</p>
+            <p style={body}>{pi.emotions.join(' · ')}</p>
           </div>
         )}
 
