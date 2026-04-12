@@ -497,6 +497,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const [hasJoinedState,      setHasJoinedState]      = useState(() => {
     try { return !!localStorage.getItem('glanceable_joined_once') } catch { return false }
   })
+  const [showCallHint, setShowCallHint] = useState(false)
   const [seenJoinOnboarding,  setSeenJoinOnboarding]  = useState(() => {
     try { return !!localStorage.getItem('glanceable_seen_join_onboarding') } catch { return false }
   })
@@ -504,7 +505,9 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const [simulatedJoinLabel,  setSimulatedJoinLabel]  = useState<string | null>(null)
   const [joinedFeedback,      setJoinedFeedback]      = useState<string | null>(null) // member id whose state was just joined
   const [echoLabel,           setEchoLabel]           = useState<string | null>(null) // transient echo of own last tap
+  const [echoFading,          setEchoFading]          = useState(false)
   const echoTimer             = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const echoFadeTimer         = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [customText,          setCustomText]          = useState('')
 
   const recentTaps = useRef<Map<string, number>>(new Map())
@@ -678,6 +681,26 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
     return () => document.removeEventListener('mousedown', handleOutside)
   }, [tappedMemberId])
 
+  // "Check before you call" — fires once when a shared state reaches count >= 2
+  useEffect(() => {
+    try { if (localStorage.getItem('glanceable_call_hint_seen')) return } catch {}
+    // Count how many members share the same event label in the last 30 min
+    const now30 = Date.now() - 30 * 60_000
+    const labelCounts = new Map<string, number>()
+    for (const e of serverEvents) {
+      if (!e.member_id) continue
+      if (new Date(e.created_at).getTime() < now30) continue
+      const k = e.label.trim().toLowerCase()
+      labelCounts.set(k, (labelCounts.get(k) ?? 0) + 1)
+    }
+    const hasShared = [...labelCounts.values()].some(n => n >= 2)
+    if (!hasShared) return
+    setShowCallHint(true)
+    try { localStorage.setItem('glanceable_call_hint_seen', '1') } catch {}
+    const t = setTimeout(() => setShowCallHint(false), 1500)
+    return () => clearTimeout(t)
+  }, [serverEvents])
+
   // ─── Actions ────────────────────────────────────────────────────────────────
 
   function closeSheet() {
@@ -731,8 +754,11 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
     // Echo moment — briefly show the tapped label near the user's own CURRENT row
     setEchoLabel(label)
+    setEchoFading(false)
     if (echoTimer.current) clearTimeout(echoTimer.current)
-    echoTimer.current = setTimeout(() => setEchoLabel(null), 2200)
+    if (echoFadeTimer.current) clearTimeout(echoFadeTimer.current)
+    echoTimer.current = setTimeout(() => setEchoFading(true), 1500)
+    echoFadeTimer.current = setTimeout(() => { setEchoLabel(null); setEchoFading(false) }, 2100)
 
     // First-run onboarding: show a simulated "Partner just joined" ghost row for 3s
     // Only when solo (no other real members) and onboarding not yet seen
@@ -1187,7 +1213,10 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
               {(() => {
                 const isSolo = visibleMembers.every(m => m.id === activeMemberId)
                 const hasOtherJoinable = activeMemberId && visibleMembers.some(m => m.id !== activeMemberId && latestActivityByMemberId.has(m.id))
-                if (isSolo && activeMemberId && latestActivityByMemberId.has(activeMemberId)) {
+                if (isSolo && activeMemberId) {
+                  if (!latestActivityByMemberId.has(activeMemberId)) {
+                    return <p style={{ fontSize: '11px', color: '#C4C0B8', marginTop: '2px', marginBottom: '0' }}>Start a moment.</p>
+                  }
                   return <p style={{ fontSize: '11px', color: '#C4C0B8', marginTop: '2px', marginBottom: '0' }}>Share a moment.</p>
                 }
                 if (!hasJoinedState && hasOtherJoinable) {
@@ -1216,10 +1245,10 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                   return (
                     <div key={m.id}>
                       <div className="flex items-center justify-between">
-                        <span style={{ fontSize: soloEmphasis ? '15px' : '14px', color: '#1f2937', fontWeight: isMe ? 500 : 400 }}>
+                        <span style={{ fontSize: soloEmphasis ? '12px' : '14px', color: soloEmphasis ? '#B0ABA4' : '#1f2937', fontWeight: 400, letterSpacing: soloEmphasis ? '0.01em' : undefined }}>
                           {m.display_name}
                         </span>
-                        <span style={{ fontSize: soloEmphasis ? '14px' : '13px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span style={{ fontSize: '13px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '5px' }}>
                           {presenceDotColor(m.presence_state) && (
                             <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: presenceDotColor(m.presence_state)!, flexShrink: 0 }} />
                           )}
@@ -1248,7 +1277,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                             setJoinedFeedback(m.id)
                             setTimeout(() => setJoinedFeedback(null), 1000)
                           } : undefined}
-                          style={{ fontSize: '12px', color: isMe ? '#6B7280' : '#9CA3AF', marginTop: '2px', marginLeft: '0', cursor: canJoinActivity ? 'pointer' : 'default' }}
+                          style={{ fontSize: soloEmphasis ? '15px' : '12px', color: soloEmphasis ? '#374151' : (isMe ? '#6B7280' : '#9CA3AF'), fontWeight: soloEmphasis ? 500 : 400, marginTop: soloEmphasis ? '3px' : '2px', marginLeft: '0', cursor: canJoinActivity ? 'pointer' : 'default' }}
                           className={canJoinActivity ? 'hover:opacity-75 hover:underline active:scale-[0.98] transition' : ''}
                         >
                           {recentActivity.emoji && <span>{recentActivity.emoji} </span>}
@@ -1256,8 +1285,13 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                           {joinedFeedback === m.id && <span style={{ color: '#C4C0B8', marginLeft: '6px' }}>joined</span>}
                         </p>
                       )}
-                      {isMe && echoLabel && echoLabel === recentActivity?.label && (
-                        <p style={{ fontSize: '11px', color: '#C4C0B8', marginTop: '1px' }}>just now</p>
+                      {isMe && echoLabel && (
+                        <div style={{ marginTop: '2px', opacity: echoFading ? 0 : 1, transition: 'opacity 500ms ease' }}>
+                          {echoLabel !== recentActivity?.label && (
+                            <p style={{ fontSize: soloEmphasis ? '14px' : '12px', color: soloEmphasis ? '#374151' : '#6B7280', fontWeight: soloEmphasis ? 500 : 400, margin: 0 }}>{echoLabel}</p>
+                          )}
+                          <p style={{ fontSize: '11px', color: '#C4C0B8', margin: 0 }}>just now</p>
+                        </div>
                       )}
                     </div>
                   )
@@ -1266,6 +1300,16 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
             </section>
           )
         })()}
+
+        {/* ── CALL HINT ─────────────────────────────────────────────────────── */}
+        <div className="px-5" style={{
+          height: showCallHint ? '24px' : '0',
+          overflow: 'hidden',
+          transition: 'height 400ms ease, opacity 400ms ease',
+          opacity: showCallHint ? 1 : 0,
+        }}>
+          <p style={{ fontSize: '12px', color: '#B0ABA4', margin: 0 }}>Check before you call</p>
+        </div>
 
         {/* ── MOMENT INVITE ─────────────────────────────────────────────────── */}
         {momentInviteLabel && space && !isSearching && (
@@ -1312,6 +1356,13 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                       setPresence(chip.state)
                       setTappedState(chip.state)
                       setTimeout(() => setTappedState(null), 250)
+                      // Echo moment for presence tap
+                      setEchoLabel(chip.label)
+                      setEchoFading(false)
+                      if (echoTimer.current) clearTimeout(echoTimer.current)
+                      if (echoFadeTimer.current) clearTimeout(echoFadeTimer.current)
+                      echoTimer.current = setTimeout(() => setEchoFading(true), 1500)
+                      echoFadeTimer.current = setTimeout(() => { setEchoLabel(null); setEchoFading(false) }, 2100)
                     }}
                     style={{
                       display:      'inline-flex',
