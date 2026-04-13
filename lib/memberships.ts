@@ -46,12 +46,14 @@ export async function getUserMemberships(): Promise<SpaceMembership[]> {
 }
 
 // Track visited spaces by ID in localStorage (up to 20, newest first).
+// Also writes last_space_id so the root route can resume on PWA/cold launch.
 export function trackSpace(spaceId: string): void {
   if (typeof window === 'undefined') return
   try {
     const ids: string[] = JSON.parse(localStorage.getItem('dw_spaces') || '[]')
     const next = [spaceId, ...ids.filter(id => id !== spaceId)].slice(0, 20)
     localStorage.setItem('dw_spaces', JSON.stringify(next))
+    localStorage.setItem('last_space_id', spaceId)
   } catch {}
 }
 
