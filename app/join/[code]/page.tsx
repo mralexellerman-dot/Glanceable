@@ -118,11 +118,17 @@ export default function JoinPage() {
       return
     }
 
+    // presence_state only accepts: 'home' | 'away' | 'dnd' | 'tbd'
+    // useLabel is a free-form event label (e.g. "Coffee") — never store it here
+    const VALID_PRESENCE = new Set(['home', 'away', 'dnd', 'tbd'])
+    const safePresence   = VALID_PRESENCE.has(useLabel?.toLowerCase()) ? useLabel.toLowerCase() : 'tbd'
+    console.log('[join] inserting presence_state:', safePresence, '(raw useLabel:', useLabel, ')')
+
     const { data: inserted, error: err } = await supabase.from('members').insert({
       space_id:       space.id,
       browser_id:     browserId,
       display_name:   name.trim(),
-      presence_state: useLabel || 'tbd',
+      presence_state: safePresence,
     }).select('id').single()
 
     if (err) {
