@@ -14,7 +14,6 @@ export default function SpacePage() {
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    trackSpace(spaceId)
     async function init() {
       // Fast path: member ID stored during join flow — skip re-query to avoid redirect loop
       try {
@@ -23,6 +22,7 @@ export default function SpacePage() {
           const { spaceId: joinedSpaceId, memberId: joinedMemberId } = JSON.parse(raw)
           if (joinedSpaceId === spaceId && joinedMemberId) {
             sessionStorage.removeItem('dw_join_handoff')
+            trackSpace(spaceId)          // confirmed access
             setMemberId(joinedMemberId)
             setReady(true)
             return
@@ -32,6 +32,7 @@ export default function SpacePage() {
 
       const member = await getMemberForSpace(spaceId)
       if (member) {
+        trackSpace(spaceId)              // confirmed access
         setMemberId(member.id)
         setReady(true)
         return

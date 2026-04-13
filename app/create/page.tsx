@@ -75,6 +75,7 @@ export default function CreateSpace() {
         throw memberError
       }
 
+      try { localStorage.setItem('last_space_id', space.id) } catch {}
       setNewSpaceId(space.id)
       setStep('welcome')
     } catch (err) {
