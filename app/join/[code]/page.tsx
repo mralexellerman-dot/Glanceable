@@ -118,12 +118,12 @@ export default function JoinPage() {
       return
     }
 
-    const { error: err } = await supabase.from('members').insert({
+    const { data: inserted, error: err } = await supabase.from('members').insert({
       space_id:       space.id,
       browser_id:     browserId,
       display_name:   name.trim(),
       presence_state: useLabel || 'tbd',
-    })
+    }).select('id').single()
 
     if (err) {
       setError(err.message)
@@ -131,6 +131,8 @@ export default function JoinPage() {
       return
     }
 
+    // Hand member ID to the space page so it doesn't need to re-query (avoids redirect loop)
+    try { sessionStorage.setItem('dw_join_handoff', JSON.stringify({ spaceId: space.id, memberId: inserted.id })) } catch {}
     router.replace(`/space/${space.id}`)
   }
 
@@ -139,6 +141,7 @@ export default function JoinPage() {
     setJoining(true)
     const browserId = getBrowserId()
     await supabase.from('members').update({ browser_id: browserId }).eq('id', dupCandidate.id)
+    try { sessionStorage.setItem('dw_join_handoff', JSON.stringify({ spaceId: space.id, memberId: dupCandidate.id })) } catch {}
     router.replace(`/space/${space.id}`)
   }
 
