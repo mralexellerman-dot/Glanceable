@@ -7,6 +7,18 @@ import { getBrowserId } from '@/lib/memberships'
 import { buildRecentActivityMap } from '@/lib/activity'
 import type { Space, Event, Member } from '@/lib/types'
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// Strip known emotion modifiers so we never show "Coffee · calm" on the join screen
+const EMOTION_WORDS = new Set(['good', 'calm', 'stressed', 'quiet', 'tired'])
+function primaryOnly(label: string): string {
+  const sep = label.lastIndexOf(' · ')
+  if (sep !== -1 && EMOTION_WORDS.has(label.slice(sep + 3).toLowerCase())) {
+    return label.slice(0, sep)
+  }
+  return label
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Phase = 'loading' | 'landing' | 'naming' | 'not_found'
@@ -194,6 +206,8 @@ export default function JoinPage() {
 
   // ─── Landing + Naming ──────────────────────────────────────────────────────
 
+  const primaryLabel = primaryOnly(stateLabel)
+
   return (
     <div style={PAGE}>
       <div style={WRAP}>
@@ -210,18 +224,18 @@ export default function JoinPage() {
           {inviterName && (
             <p style={{ fontSize: '15px', color: '#9A948E', margin: 0 }}>{inviterName}</p>
           )}
-          {stateLabel && (
+          {primaryLabel && (
             <p style={{ fontSize: '22px', fontWeight: 600, color: '#1C1814', margin: 0, letterSpacing: '-0.01em' }}>
-              {stateLabel}
+              {primaryLabel}
             </p>
           )}
-          {stateLabel && phase === 'landing' && (
+          {primaryLabel && phase === 'landing' && (
             <p style={{ fontSize: '13px', color: '#B0ABA4', margin: 0, marginTop: '2px' }}>Right now?</p>
           )}
         </div>
 
         {/* Primary action — tappable state chip */}
-        {stateLabel && phase === 'landing' && (
+        {primaryLabel && phase === 'landing' && (
           <button
             onClick={() => setPhase('naming')}
             style={{
@@ -239,7 +253,7 @@ export default function JoinPage() {
               letterSpacing: '-0.01em',
             }}
           >
-            {stateLabel}
+            {primaryLabel}
           </button>
         )}
 
@@ -281,7 +295,7 @@ export default function JoinPage() {
                   type="text"
                   value={memberName}
                   onChange={e => setMemberName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && memberName.trim() && doJoin(memberName, stateLabel)}
+                  onKeyDown={e => e.key === 'Enter' && memberName.trim() && doJoin(memberName, primaryLabel)}
                   placeholder="Your name"
                   style={{
                     fontSize: '16px', color: '#1C1814',
@@ -292,7 +306,7 @@ export default function JoinPage() {
                 />
                 {error && <p style={{ fontSize: '12px', color: '#EF4444', margin: 0 }}>{error}</p>}
                 <button
-                  onClick={() => doJoin(memberName, stateLabel)}
+                  onClick={() => doJoin(memberName, primaryLabel)}
                   disabled={!memberName.trim() || joining}
                   style={{
                     padding: '12px 0', borderRadius: '12px',
@@ -303,7 +317,7 @@ export default function JoinPage() {
                     transition: 'opacity 150ms',
                   }}
                 >
-                  {joining ? 'Joining…' : stateLabel ? `Join · ${stateLabel}` : 'Join'}
+                  {joining ? 'Joining…' : primaryLabel ? `Join · ${primaryLabel}` : 'Join'}
                 </button>
               </>
             )}

@@ -100,6 +100,14 @@ function parseCompositeState(label: string): { primary: string; emotion: string 
   return { primary: label, emotion: null }
 }
 
+// Emotion modifiers expire after 45 minutes — actions persist indefinitely
+const EMOTION_TTL_MS = 45 * 60 * 1000
+function decayedLabel(label: string, createdAt: string): string {
+  const { primary, emotion } = parseCompositeState(label)
+  if (!emotion) return label
+  return Date.now() - new Date(createdAt).getTime() > EMOTION_TTL_MS ? primary : label
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function relativeTime(dateStr: string, now: number = Date.now()): string {
@@ -938,9 +946,12 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
   async function copyInviteLink() {
     if (!space) return
-    const link         = `${window.location.origin}/join/${space.invite_code}`
-    const stateLabel   = latestActivityByMemberId.get(activeMemberId)?.label
-    const message      = stateLabel ? `${stateLabel}.\n\n${link}` : link
+    const link      = `${window.location.origin}/join/${space.invite_code}`
+    const rawLabel  = latestActivityByMemberId.get(activeMemberId)?.label
+    const primary   = rawLabel ? parseCompositeState(rawLabel).primary : null
+    const message   = primary
+      ? `${space.name}\n\n${primary}\n\n${link}`
+      : `${space.name}\n\n${link}`
 
     try {
       if (navigator.share) {
@@ -1399,7 +1410,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                         <p
                           onClick={canJoinActivity ? () => {
                             console.log('[tap-to-join] activity label:', recentActivity.label, '| activeMemberId:', activeMemberId)
-                            tapIn(recentActivity.emoji || '', recentActivity.label)
+                            tapIn(recentActivity.emoji || '', decayedLabel(recentActivity.label, recentActivity.created_at))
                             if (!hasJoinedState) { setHasJoinedState(true); try { localStorage.setItem('glanceable_joined_once', '1') } catch {} }
                             setJoinedFeedback(m.id)
                             setTimeout(() => setJoinedFeedback(null), 1000)
@@ -1408,7 +1419,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                           className={canJoinActivity ? 'hover:opacity-75 hover:underline active:scale-[0.98] transition' : ''}
                         >
                           {(() => {
-                            const { primary, emotion } = parseCompositeState(recentActivity.label)
+                            const { primary, emotion } = parseCompositeState(decayedLabel(recentActivity.label, recentActivity.created_at))
                             return (
                               <>
                                 {recentActivity.emoji && <span>{recentActivity.emoji} </span>}
@@ -1456,8 +1467,9 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
           <div className="px-5 pb-3">
             <button
               onClick={async () => {
-                const link = `${window.location.origin}/join/${space.invite_code}`
-                const msg  = `${momentInviteLabel}.\n\n${link}`
+                const link    = `${window.location.origin}/join/${space.invite_code}`
+                const primary = parseCompositeState(momentInviteLabel).primary
+                const msg     = `${space.name}\n\n${primary}\n\n${link}`
                 try {
                   if (navigator.share) {
                     await navigator.share({ text: msg })
@@ -1582,7 +1594,8 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
 
                 {/* ── Emotion chips ── */}
                 {activeMemberId && (() => {
-                  const myLabel = latestActivityByMemberId.get(activeMemberId)?.label ?? ''
+                  const myEvent = latestActivityByMemberId.get(activeMemberId)
+                  const myLabel = myEvent ? decayedLabel(myEvent.label, myEvent.created_at) : ''
                   const { emotion: myEmotion } = parseCompositeState(myLabel)
                   return (
                     <div className="flex flex-wrap gap-1.5" style={{ marginTop: '6px' }}>
