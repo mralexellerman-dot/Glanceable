@@ -1551,11 +1551,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                           key={chip.label}
                           className="dw-chip"
                           onClick={() => {
-                            // Preserve existing emotion when switching primary state
-                            const cur = latestActivityByMemberId.get(activeMemberId)?.label ?? ''
-                            const { emotion } = parseCompositeState(cur)
-                            const composed = emotion ? `${chip.label} · ${emotion}` : chip.label
-                            tapIn(chip.emoji, composed)
+                            tapIn(chip.emoji, chip.label)
                             setFlashedChip(chip.label)
                             setTimeout(() => setFlashedChip(null), 300)
                           }}
