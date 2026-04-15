@@ -1,20 +1,54 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { supabase } from '@/lib/supabase'
+import { getUserMemberships } from '@/lib/memberships'
+
+type Phase = 'checking' | 'landing'
 
 export default function Home() {
   const router = useRouter()
+  const [phase, setPhase] = useState<Phase>('checking')
 
   useEffect(() => {
-    try {
-      const lastSpaceId = localStorage.getItem('last_space_id')
-      if (lastSpaceId) {
-        router.replace(`/space/${lastSpaceId}`)
+    async function check() {
+      // Gate 1: real auth session required — no session = incognito / signed-out
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        setPhase('landing')
         return
       }
-    } catch {}
+
+      // Gate 2: must have at least one space membership
+      const memberships = await getUserMemberships()
+      if (memberships.length === 0) {
+        setPhase('landing')
+        return
+      }
+
+      // Prefer the last active space if it's still in the membership list
+      let targetId: string = memberships[0].space_id
+      try {
+        const lastId = localStorage.getItem('last_space_id')
+        if (lastId && memberships.some(m => m.space_id === lastId)) {
+          targetId = lastId
+        }
+      } catch {}
+
+      router.replace(`/space/${targetId}`)
+    }
+
+    check()
   }, [router])
+
+  if (phase === 'checking') {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: '#FAFAF8' }}>
+        <span style={{ color: '#C4C0B8', fontSize: '14px' }}>…</span>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-white">

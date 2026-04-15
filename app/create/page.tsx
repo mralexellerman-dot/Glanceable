@@ -3,31 +3,19 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import Link from 'next/link'
 import { getBrowserId } from '@/lib/memberships'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type SpaceType = 'Home' | 'Team' | 'Work' | 'Friends' | 'Custom'
-type Step = 'type' | 'name' | 'welcome'
-
-const TYPE_PLACEHOLDERS: Record<SpaceType, string> = {
-  Home:    'Maple House, The Cabin, Beach House…',
-  Team:    'Volleyball Team, Soccer Squad, The Practice…',
-  Work:    'Studio 4B, HQ, The Office…',
-  Friends: 'The Crew, Weekend House, Lake Place…',
-  Custom:  'Name this space…',
-}
+type Step = 'start' | 'name' | 'welcome'
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CreateSpace() {
   const router = useRouter()
 
-  const [step,       setStep]       = useState<Step>('type')
-  const [spaceType,  setSpaceType]  = useState<SpaceType | null>(null)
+  const [step,       setStep]       = useState<Step>('start')
   const [spaceName,  setSpaceName]  = useState('')
   const [memberName, setMemberName] = useState('')
+  const [joinCode,   setJoinCode]   = useState('')
   const [loading,    setLoading]    = useState(false)
   const [error,      setError]      = useState('')
   const [newSpaceId, setNewSpaceId] = useState<string | null>(null)
@@ -38,51 +26,39 @@ export default function CreateSpace() {
     setError('')
 
     try {
-      const spacePayload = { name: spaceName.trim() }
-      console.log('[create] space insert payload:', spacePayload)
-
       const { data: space, error: spaceError } = await supabase
         .from('spaces')
-        .insert(spacePayload)
+        .insert({ name: spaceName.trim() })
         .select()
         .single()
 
-      console.log('[create] space insert result:', { data: space, error: spaceError })
+      if (spaceError) throw spaceError
 
-      if (spaceError) {
-        console.error('[create] space insert failed:', spaceError)
-        throw spaceError
-      }
-
-      const memberPayload = {
-        space_id:       space.id,
-        display_name:   memberName.trim(),
-        presence_state: 'tbd',
-        browser_id:     getBrowserId(),
-      }
-
-      console.log('[create] member insert payload:', memberPayload)
-
-      const { data: memberData, error: memberError } = await supabase
+      const { error: memberError } = await supabase
         .from('members')
-        .insert(memberPayload)
+        .insert({
+          space_id:       space.id,
+          display_name:   memberName.trim(),
+          presence_state: 'tbd',
+          browser_id:     getBrowserId(),
+        })
         .select()
 
-      console.log('[create] member insert result:', { data: memberData, error: memberError })
-
-      if (memberError) {
-        console.error('[create] member insert failed:', memberError)
-        throw memberError
-      }
+      if (memberError) throw memberError
 
       try { localStorage.setItem('last_space_id', space.id) } catch {}
       setNewSpaceId(space.id)
       setStep('welcome')
-    } catch (err) {
-      console.error('[create] handleCreate error:', err)
+    } catch {
       setError('Something went wrong. Please try again.')
       setLoading(false)
     }
+  }
+
+  function handleJoinSubmit() {
+    const code = joinCode.trim().toUpperCase()
+    if (!code) return
+    router.push(`/join/${code}`)
   }
 
   return (
@@ -92,30 +68,53 @@ export default function CreateSpace() {
     >
       <div className="w-full max-w-[420px] space-y-6">
 
-        {/* ── Screen 1: What is this space for? ────────────────────────────── */}
-        {step === 'type' && (
+        {/* ── Screen 1: Start ───────────────────────────────────────────────── */}
+        {step === 'start' && (
           <>
-            <Link href="/" className="inline-block text-sm" style={{ color: 'var(--text-muted)' }}>
-              ← Back
-            </Link>
-            <h1 className="text-xl font-semibold" style={{ color: 'var(--text)' }}>
-              What is this space for?
-            </h1>
-            <div className="flex flex-wrap gap-2">
-              {(['Home', 'Team', 'Work', 'Friends', 'Custom'] as SpaceType[]).map(t => (
-                <button
-                  key={t}
-                  onClick={() => { setSpaceType(t); setStep('name') }}
-                  className="px-4 py-2.5 rounded-xl text-sm font-medium active:opacity-70"
-                  style={{ background: '#F4F1EC', color: '#3A3630', border: 'none', cursor: 'pointer' }}
-                >
-                  {t}
-                </button>
-              ))}
+            <div>
+              <h1 className="text-xl font-semibold" style={{ color: 'var(--text)' }}>
+                Glanceable
+              </h1>
+              <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
+                A quiet signal for the people in your life.
+              </p>
             </div>
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              Tap one to get started. You can add more later.
-            </p>
+            <div className="space-y-2">
+              <button
+                onClick={() => setStep('name')}
+                className="w-full py-3.5 rounded-xl text-sm font-medium text-white"
+                style={{ background: '#1A1A18', border: 'none', cursor: 'pointer' }}
+              >
+                Create a space
+              </button>
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px', marginTop: '8px' }}>
+                <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>Have an invite?</p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={joinCode}
+                    onChange={e => setJoinCode(e.target.value.toUpperCase())}
+                    onKeyDown={e => e.key === 'Enter' && handleJoinSubmit()}
+                    placeholder="Enter code"
+                    maxLength={8}
+                    className="flex-1 px-3 py-2.5 rounded-xl text-sm outline-none"
+                    style={{ border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', letterSpacing: '0.08em' }}
+                  />
+                  <button
+                    onClick={handleJoinSubmit}
+                    disabled={!joinCode.trim()}
+                    className="px-4 py-2.5 rounded-xl text-sm font-medium"
+                    style={{
+                      background: joinCode.trim() ? '#1A1A18' : '#F4F1EC',
+                      color:      joinCode.trim() ? '#FFFFFF' : '#B0ABA4',
+                      border: 'none', cursor: joinCode.trim() ? 'pointer' : 'default',
+                    }}
+                  >
+                    Join
+                  </button>
+                </div>
+              </div>
+            </div>
           </>
         )}
 
@@ -123,7 +122,7 @@ export default function CreateSpace() {
         {step === 'name' && (
           <>
             <button
-              onClick={() => setStep('type')}
+              onClick={() => setStep('start')}
               className="text-sm"
               style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
             >
@@ -133,16 +132,13 @@ export default function CreateSpace() {
               <h1 className="text-xl font-semibold" style={{ color: 'var(--text)' }}>
                 Name your space
               </h1>
-              <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
-                Invite someone (optional)
-              </p>
             </div>
             <div className="space-y-3">
               <input
                 type="text"
                 value={spaceName}
                 onChange={e => setSpaceName(e.target.value)}
-                placeholder={spaceType ? TYPE_PLACEHOLDERS[spaceType] : 'Name this space…'}
+                placeholder="Home, The Cabin, Studio 4B…"
                 className="w-full px-4 py-3 rounded-xl text-base outline-none"
                 style={{ border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
                 autoFocus
@@ -151,14 +147,11 @@ export default function CreateSpace() {
                 type="text"
                 value={memberName}
                 onChange={e => setMemberName(e.target.value)}
-                placeholder="Your name (Mom, Dad, Sam…)"
+                placeholder="Your name"
                 className="w-full px-4 py-3 rounded-xl text-base outline-none"
                 style={{ border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
                 onKeyDown={e => e.key === 'Enter' && spaceName.trim() && memberName.trim() && handleCreate()}
               />
-              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                Spaces work best with others.
-              </p>
               {error && <p className="text-sm text-red-500">{error}</p>}
               <button
                 onClick={handleCreate}
@@ -172,7 +165,7 @@ export default function CreateSpace() {
           </>
         )}
 
-        {/* ── Screen 3: Join the present. ───────────────────────────────────── */}
+        {/* ── Screen 3: Welcome ─────────────────────────────────────────────── */}
         {step === 'welcome' && newSpaceId && (
           <>
             <div>
@@ -198,7 +191,7 @@ export default function CreateSpace() {
                 className="w-full py-3 text-sm"
                 style={{ background: 'transparent', color: 'var(--text-muted)', border: 'none', cursor: 'pointer' }}
               >
-                Keep demo spaces
+                Back to home
               </button>
             </div>
           </>
