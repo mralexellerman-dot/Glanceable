@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /space/
+Disallow: /api/
+
+Sitemap: https://glanceable.app/sitemap.xml

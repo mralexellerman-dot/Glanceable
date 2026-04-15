@@ -83,8 +83,13 @@ const STATE_EMOJI: Record<string, string> = {
   'Coffee':      '☕',
 }
 
-// Emotion modifier chips — secondary layer, always lowercase
-const EMOTION_CHIPS = ['good', 'calm', 'stressed', 'quiet', 'tired']
+// ─── Fixed palette ────────────────────────────────────────────────────────────
+
+// Primary action chips — fixed set, renders as main row
+const ACTION_CHIPS = ['Coffee', 'Working', 'Getting ready', 'Home', 'Out', 'Relaxing']
+
+// Emotion modifier chips — secondary row, always lowercase, optional
+const EMOTION_CHIPS = ['calm', 'focused', 'tired', 'stressed', 'quiet', 'good']
 const EMOTION_SET   = new Set(EMOTION_CHIPS)
 
 // Parse "Working · stressed" → { primary: "Working", emotion: "stressed" }
@@ -195,58 +200,6 @@ function buildPresenceChips(): { label: string; state: string }[] {
 }
 
 const RECENT_TAP_MS = 45 * 60_000
-
-interface Chip { emoji: string; label: string }
-
-// Build dynamic chip palette: SOCIAL → CORE → CONTEXT → RECENT → optional SPARK, capped 6–8
-function buildDynamicChips(
-  hour: number,
-  socialLabels: { label: string; count: number }[],  // from CURRENT members
-  userHistory:  string[],                             // recent event labels for active user
-  seen: Set<string> = new Set(),                      // already-shown labels (normalized)
-): Chip[] {
-  const result: Chip[] = []
-  const added = new Set<string>(seen)
-
-  function push(label: string, emoji = '') {
-    const norm = label.trim().toLowerCase()
-    if (added.has(norm)) return
-    added.add(norm)
-    result.push({ emoji, label })
-  }
-
-  // 1) SOCIAL — current shared states, sorted by count desc, max 2
-  ;[...socialLabels]
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 2)
-    .forEach(s => push(s.label))
-
-  // 2) CORE — always present
-  ;['Working', 'Relaxing', 'Out', 'Home'].forEach(l => push(l))
-
-  // 3) CONTEXT — 2–3 time-aware additions
-  const context: string[] =
-    hour >= 5  && hour < 11 ? ['Getting ready', 'Coffee', 'Focused'] :
-    hour >= 11 && hour < 15 ? ['Lunch', 'Busy'] :
-    hour >= 15 && hour < 21 ? ['Dinner', 'Winding down'] :
-    ['Tired', 'Sleep soon']
-  context.forEach(l => push(l))
-
-  // 4) RECENT — last 3 unique user history labels not already shown, max 2
-  const recentAdded: string[] = []
-  for (const label of userHistory) {
-    if (recentAdded.length >= 2) break
-    const norm = label.trim().toLowerCase()
-    if (!added.has(norm)) { push(label); recentAdded.push(norm) }
-  }
-
-  // 5) SPARK — one rotating emotional chip, at most once per session
-  const sparks = ['Grateful', 'Excited', 'Hoping']
-  const sparkIdx = Math.floor(Date.now() / (24 * 3_600_000)) % sparks.length // rotates daily
-  push(sparks[sparkIdx])
-
-  return result.slice(0, 8)
-}
 
 // Subtle background warmth by time of day
 function timeOfDayBg(): string {
@@ -531,9 +484,12 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   const [editingName, setEditingName] = useState(false)
   const [newName,     setNewName]     = useState('')
   const [logExpanded,         setLogExpanded]         = useState(false)
-  const [suggestionsExpanded, setSuggestionsExpanded] = useState(false)
   const [tapInFeedback,       setTapInFeedback]       = useState<string | null>(null)
   const [flashedChip,         setFlashedChip]         = useState<string | null>(null)
+  const [selectedAction,      setSelectedAction]      = useState<string | null>(null)
+  const [selectedActionAt,    setSelectedActionAt]    = useState<number | null>(null)
+  const lastEmotionRef        = useRef<Record<string, string>>({})
+  const selectedActionTimer   = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [tappedState,         setTappedState]         = useState<string | null>(null)
   const [hasJoinedState,      setHasJoinedState]      = useState(() => {
     try { return !!localStorage.getItem('glanceable_joined_once') } catch { return false }
@@ -659,6 +615,11 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   // Weather — one fetch per session, silent failure
   useEffect(() => {
     getWeatherCondition().then(setWeather)
+  }, [])
+
+  // Cleanup selected-action timer on unmount
+  useEffect(() => {
+    return () => { if (selectedActionTimer.current) clearTimeout(selectedActionTimer.current) }
   }, [])
 
   // Last-seen tracking — highlight items newer than the previous session's open time
@@ -791,7 +752,6 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   function handleWhatHappening() {
     if (logExpanded) {
       setLogExpanded(false)
-      setSuggestionsExpanded(false)
       return
     }
     const ts = Date.now()
@@ -837,6 +797,42 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         try { localStorage.setItem('glanceable_seen_join_onboarding', '1') } catch {}
       }, 3000)
     }
+  }
+
+  // ─── Selected-action helpers ─────────────────────────────────────────────────
+
+  const REFINE_WINDOW_MS    = 10_000
+  const SELECTED_ACTION_UI_MS = 5_000
+
+  function armSelectedAction(action: string) {
+    setSelectedAction(action)
+    setSelectedActionAt(Date.now())
+    if (selectedActionTimer.current) clearTimeout(selectedActionTimer.current)
+    selectedActionTimer.current = setTimeout(() => {
+      setSelectedAction(null)
+      setSelectedActionAt(null)
+    }, SELECTED_ACTION_UI_MS)
+  }
+
+  function clearSelectedAction() {
+    setSelectedAction(null)
+    setSelectedActionAt(null)
+    if (selectedActionTimer.current) clearTimeout(selectedActionTimer.current)
+  }
+
+  function canRefineSelectedAction() {
+    return !!selectedAction && !!selectedActionAt && (Date.now() - selectedActionAt < REFINE_WINDOW_MS)
+  }
+
+  function removeRecentOptimisticPlainAction(action: string) {
+    setOptimisticEvents(prev =>
+      prev.filter(e => {
+        if (e.member_id !== activeMemberId) return true
+        if (Date.now() - new Date(e.created_at).getTime() >= REFINE_WINDOW_MS) return true
+        const parsed = parseCompositeState(e.label)
+        return !(parsed.primary.trim().toLowerCase() === action.trim().toLowerCase() && !parsed.emotion)
+      })
+    )
   }
 
   async function logEvent(emoji: string, label: string, note?: string) {
@@ -1127,34 +1123,6 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   // Presence chips (TAP IN) and activity chips (QUICK LOG) are kept separate
   const presenceChips  = buildPresenceChips()
 
-  // Build dynamic chip palette
-  const activityChips = (() => {
-    const hour = new Date().getHours()
-
-    // SOCIAL: labels currently active in CURRENT with their member counts
-    const socialLabels: { label: string; count: number }[] = []
-    for (const [, event] of latestActivityByMemberId) {
-      const norm = event.label.trim().toLowerCase()
-      const count = members.filter(m =>
-        latestActivityByMemberId.get(m.id)?.label.trim().toLowerCase() === norm
-      ).length
-      if (count >= 1 && !socialLabels.some(s => s.label.trim().toLowerCase() === norm)) {
-        socialLabels.push({ label: event.label, count })
-      }
-    }
-
-    // RECENT: last 5 unique event labels for the active user
-    const userHistory: string[] = []
-    const histSeen = new Set<string>()
-    for (const e of combinedEvents) {
-      if (e.member_id !== activeMemberId) continue
-      const norm = e.label.trim().toLowerCase()
-      if (!histSeen.has(norm)) { histSeen.add(norm); userHistory.push(e.label) }
-      if (userHistory.length >= 5) break
-    }
-
-    return buildDynamicChips(hour, socialLabels, userHistory)
-  })()
 
   // Active presence state for highlighting the current chip
   const myPresenceState = members.find(m => m.id === activeMemberId)?.presence_state ?? ''
@@ -1544,43 +1512,54 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                 <p style={{ fontSize: '14px', color: '#4A453F' }}>✓ {tapInFeedback}</p>
               ) : (
                 <>
+                {/* ── Action chips (primary) ── */}
                 <div className="flex flex-wrap gap-1.5">
                   {(() => {
-                    const myLabel   = latestActivityByMemberId.get(activeMemberId)?.label ?? ''
+                    const myLabel  = latestActivityByMemberId.get(activeMemberId)?.label ?? ''
                     const { primary: myPrimary } = parseCompositeState(myLabel)
-                    return activityChips.map(chip => {
-                      // count by primary state only, ignoring emotion suffix
+
+                    return ACTION_CHIPS.map(label => {
                       const count = members.filter(m => {
                         const lbl = latestActivityByMemberId.get(m.id)?.label ?? ''
-                        return parseCompositeState(lbl).primary.trim().toLowerCase() === chip.label.trim().toLowerCase()
+                        return parseCompositeState(lbl).primary.trim().toLowerCase() === label.trim().toLowerCase()
                       }).length
-                      const isShared  = count >= 2
-                      const isFlashed = flashedChip === chip.label
-                      const isActive  = myPrimary.trim().toLowerCase() === chip.label.trim().toLowerCase()
-                      const displayEmoji = STATE_EMOJI[chip.label] ?? chip.emoji
+
+                      const isShared   = count >= 2
+                      const isFlashed  = flashedChip === label
+                      const isActive   = myPrimary.trim().toLowerCase() === label.trim().toLowerCase()
+                      const isSelected = selectedAction === label && canRefineSelectedAction()
+                      const emoji      = STATE_EMOJI[label] ?? ''
+
                       return (
                         <button
-                          key={chip.label}
+                          key={label}
                           className="dw-chip"
                           onClick={() => {
-                            tapIn(chip.emoji, chip.label)
-                            setFlashedChip(chip.label)
+                            const rememberedEmotion = lastEmotionRef.current[label]
+                            const nextLabel = rememberedEmotion ? `${label} · ${rememberedEmotion}` : label
+                            tapIn(emoji, nextLabel)
+                            armSelectedAction(label)
+                            setFlashedChip(label)
                             setTimeout(() => setFlashedChip(null), 300)
                           }}
                           style={{
-                            display:      'inline-flex',
-                            alignItems:   'center',
-                            padding:      '4px 12px',
+                            display:    'inline-flex',
+                            alignItems: 'center',
+                            padding:    '4px 12px',
                             borderRadius: '999px',
-                            background:   isFlashed ? '#E4DFD8' : isActive ? '#E8E4DC' : '#F4F1EC',
-                            fontSize:     '13px',
-                            color:        isShared ? '#1A1A18' : '#3A3630',
-                            fontWeight:   isShared || isActive ? 500 : 400,
-                            border:       'none',
-                            cursor:       'pointer',
+                            background: isFlashed
+                              ? '#E4DFD8'
+                              : isActive || isSelected
+                              ? '#E8E4DC'
+                              : '#F4F1EC',
+                            fontSize:   '13px',
+                            color:      isShared ? '#1A1A18' : '#3A3630',
+                            fontWeight: isShared || isActive || isSelected ? 500 : 400,
+                            border:     isSelected ? '1px solid #D6D1C8' : 'none',
+                            cursor:     'pointer',
                           }}
                         >
-                          {displayEmoji ? `${displayEmoji} ${chip.label}` : chip.label}
+                          {emoji ? `${emoji} ${label}` : label}
                           {count >= 1 && (
                             <span style={{ color: isShared ? '#6B7280' : '#9CA3AF', marginLeft: '4px', fontWeight: 400 }}>
                               · {count}
@@ -1592,47 +1571,50 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                   })()}
                 </div>
 
-                {/* ── Emotion chips ── */}
+                {/* ── Emotion chips (secondary) ── */}
                 {activeMemberId && (() => {
                   const myEvent = latestActivityByMemberId.get(activeMemberId)
                   const myLabel = myEvent ? decayedLabel(myEvent.label, myEvent.created_at) : ''
                   const { emotion: myEmotion } = parseCompositeState(myLabel)
+                  const isSelectable = canRefineSelectedAction()
+
                   return (
                     <div className="flex flex-wrap gap-1.5" style={{ marginTop: '6px' }}>
                       {EMOTION_CHIPS.map(emo => {
-                        const isActive  = myEmotion?.toLowerCase() === emo
-                        const isFlashed = flashedChip === emo
+                        const isActive = (myEmotion ?? '').trim().toLowerCase() === emo
+
                         return (
                           <button
                             key={emo}
                             className="dw-chip"
                             onClick={() => {
-                              const cur = latestActivityByMemberId.get(activeMemberId)?.label ?? ''
-                              const { primary } = parseCompositeState(cur)
-                              // Toggle off if same emotion; otherwise set/replace
-                              const composed = isActive
-                                ? (primary || '')
-                                : (primary ? `${primary} · ${emo}` : emo)
-                              if (composed) {
-                                tapIn('', composed)
+                              // CASE 1: emotion refines a recent selected action
+                              if (selectedAction && canRefineSelectedAction()) {
+                                const action   = selectedAction
+                                const combined = `${action} · ${emo}`
+                                lastEmotionRef.current[action] = emo
+                                removeRecentOptimisticPlainAction(action)
+                                tapIn('', combined)
+                                clearSelectedAction()
+                                return
                               }
-                              if (!isActive) {
-                                setFlashedChip(emo)
-                                setTimeout(() => setFlashedChip(null), 300)
-                              }
+                              // CASE 2: emotion-only
+                              tapIn('', emo)
+                              clearSelectedAction()
                             }}
                             style={{
-                              display:      'inline-flex',
-                              alignItems:   'center',
-                              padding:      '3px 11px',
+                              display:    'inline-flex',
+                              alignItems: 'center',
+                              padding:    '3px 11px',
                               borderRadius: '999px',
-                              background:   isFlashed ? '#E4DFD8' : isActive ? '#EAE6E0' : '#F4F1EC',
-                              fontSize:     '12px',
-                              color:        isActive ? '#4A453F' : '#7A7470',
-                              fontStyle:    'italic',
-                              fontWeight:   isActive ? 500 : 400,
-                              border:       isActive ? '1px solid #D5D0CA' : '1px solid transparent',
-                              cursor:       'pointer',
+                              background: isActive ? '#EAE6E0' : '#F7F4EE',
+                              fontSize:   '12px',
+                              color:      isActive ? '#4A453F' : '#7A7470',
+                              fontStyle:  'italic',
+                              fontWeight: isActive ? 500 : 400,
+                              border:     isActive ? '1px solid #D5D0CA' : '1px solid transparent',
+                              opacity:    isSelectable ? 1 : 0.72,
+                              cursor:     'pointer',
                             }}
                           >
                             {emo}
@@ -1717,8 +1699,8 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
               {customText.trim().length >= 2 && (() => {
                 const q = customText.trim().toLowerCase()
                 const pool = [
-                  ...activityChips.map(c => c.label),
-                  'Working', 'Relaxing', 'Out', 'Home', 'Focused', 'Busy', 'Tired',
+                  ...ACTION_CHIPS,
+                  'Focused', 'Busy', 'Tired', 'Dinner', 'Lunch', 'Commuting',
                 ]
                 const seen = new Set<string>()
                 const matches = pool.filter(l => {
