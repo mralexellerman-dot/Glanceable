@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { getUserMemberships } from '@/lib/memberships'
+import { getUserMemberships, getTrackedSpaceIds } from '@/lib/memberships'
 import MultiSpaceSnapshot from '@/components/MultiSpaceSnapshot'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -45,6 +45,7 @@ if (memberships.length === 0) {
 
  // Multiple spaces — build snapshot rows
 const spaceIds = memberships.map(m => m.space_id)
+
 
 // fetch recent events
 const { data: recentEvents } = await supabase
