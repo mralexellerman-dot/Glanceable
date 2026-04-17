@@ -20,16 +20,18 @@ interface SpaceRow {
 
 export default function Home() {
   const router = useRouter()
-  const [phase,  setPhase]  = useState<Phase>('checking')
-  const [spaces, setSpaces] = useState<SpaceRow[]>([])
+ const [phase,  setPhase]  = useState<Phase>('checking')
+const [spaces, setSpaces] = useState<SpaceRow[]>([])
+const [debugCount, setDebugCount] = useState<number | null>(null)
 
   useEffect(() => {
     async function check() {
 // Use memberships as the real gate for launch.
 // Do not require a Supabase auth session here, because the app
 // can already identify space membership through browser-based flows.
-const memberships = await getUserMemberships()
-
+setDebugCount(memberships.length)
+console.log('MEMBERSHIPS:', memberships)
+console.log('COUNT:', memberships.length)
 if (memberships.length === 0) {
   setPhase('landing')
   return
@@ -162,8 +164,12 @@ setPhase('spaces')
   </a>
 
   <p className="mt-4 text-gray-500 text-base">
-    Know when it’s a good time to connect — without asking.
-  </p>
+  Know when it’s a good time to connect — without asking.
+</p>
+
+<p className="mt-3 text-sm text-gray-400">
+  membership count: {debugCount ?? 'none'}
+</p>
 </section>
 
 
