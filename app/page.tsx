@@ -25,22 +25,14 @@ export default function Home() {
 
   useEffect(() => {
     async function check() {
-      // Gate 1: real auth session required — no session = incognito / signed-out
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
-        setPhase('landing')
-        return
-      }
+// Use memberships as the real gate for launch.
+// Do not require a Supabase auth session here, because the app
+// can already identify space membership through browser-based flows.
+const memberships = await getUserMemberships()
 
-      // Gate 2: must have at least one space membership
-      const memberships = await getUserMemberships()
-      console.log('MEMBERSHIPS:', memberships)
-console.log('COUNT:', memberships.length)
-const { data: { session } } = await supabase.auth.getSession()
-console.log('SESSION:', session?.user?.id)
-      if (memberships.length === 0) {
-        setPhase('landing')
-        return
+if (memberships.length === 0) {
+  setPhase('landing')
+  return
       }
 
       // Single space — redirect directly
