@@ -34,6 +34,10 @@ export default function Home() {
 
       // Gate 2: must have at least one space membership
       const memberships = await getUserMemberships()
+      console.log('MEMBERSHIPS:', memberships)
+console.log('COUNT:', memberships.length)
+const { data: { session } } = await supabase.auth.getSession()
+console.log('SESSION:', session?.user?.id)
       if (memberships.length === 0) {
         setPhase('landing')
         return
