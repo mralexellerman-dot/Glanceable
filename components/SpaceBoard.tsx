@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import type { Space, Member, Event, Upcoming } from '@/lib/types'
-import { getUserMemberships } from '@/lib/memberships'
+import { getUserMemberships, trackSpace } from '@/lib/memberships'
 import { buildSuggestions } from '@/lib/suggestions'
 import type { SuggestionItem } from '@/lib/suggestions'
 import { getWeatherCondition } from '@/lib/weather'
@@ -570,6 +570,10 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
   useEffect(() => {
     fetchAll()
     const ch = supabase
+    useEffect(() => {
+  if (!spaceId) return
+  trackSpace(spaceId)
+}, [spaceId])
       .channel(`space-${spaceId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'members', filter: `space_id=eq.${spaceId}` }, (payload) => {
         setMembers(prev => [...prev, payload.new as Member])
