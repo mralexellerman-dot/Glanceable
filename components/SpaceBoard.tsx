@@ -567,25 +567,26 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
     setLoading(false)
   }, [spaceId])
 
-  useEffect(() => {
-    fetchAll()
-    const ch = supabase
-    useEffect(() => {
+useEffect(() => {
   if (!spaceId) return
+
+  fetchAll()
+  const ch = supabase
+    .channel(`space-${spaceId}`)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'members', filter: `space_id=eq.${spaceId}` }, (payload) => {
+      setMembers(prev => [...prev, payload.new as Member])
+    })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'members', filter: `space_id=eq.${spaceId}` }, (payload) => {
+      setMembers(prev => prev.map(m => m.id === (payload.new as Member).id ? payload.new as Member : m))
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'events',   filter: `space_id=eq.${spaceId}` }, fetchAll)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'upcoming', filter: `space_id=eq.${spaceId}` }, fetchAll)
+    .subscribe()
+
   trackSpace(spaceId)
-}, [spaceId])
-      .channel(`space-${spaceId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'members', filter: `space_id=eq.${spaceId}` }, (payload) => {
-        setMembers(prev => [...prev, payload.new as Member])
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'members', filter: `space_id=eq.${spaceId}` }, (payload) => {
-        setMembers(prev => prev.map(m => m.id === (payload.new as Member).id ? payload.new as Member : m))
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'events',   filter: `space_id=eq.${spaceId}` }, fetchAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'upcoming', filter: `space_id=eq.${spaceId}` }, fetchAll)
-      .subscribe()
-    return () => { supabase.removeChannel(ch) }
-  }, [spaceId, fetchAll])
+
+  return () => { supabase.removeChannel(ch) }
+}, [spaceId, fetchAll])
 
   useEffect(() => {
     getUserMemberships().then(ms => {
@@ -1316,6 +1317,7 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         {(() => {
           const visibleMembers = sortedMembers
           console.log('[CURRENT] member_id:', activeMemberId, '| members fetched:', members.length, '| member_ids in CURRENT:', visibleMembers.map(m => m.id))
+          const isSolo = members.length <= 1
           if (visibleMembers.length === 0) return null
           return (
             <section className="px-5 pb-5 lg:pb-4">
@@ -1355,9 +1357,24 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
                   return (
                     <div key={m.id}>
                       <div className="flex items-center justify-between">
-                        <span style={{ fontSize: soloEmphasis ? '12px' : '14px', color: soloEmphasis ? '#B0ABA4' : '#1f2937', fontWeight: 400, letterSpacing: soloEmphasis ? '0.01em' : undefined }}>
-                          {m.display_name}
-                        </span>
+                        <span
+  style={{
+    fontSize: soloEmphasis ? '12px' : '14px',
+    color: soloEmphasis ? '#B0ABA4' : '#1f2937',
+    fontWeight: 400,
+    letterSpacing: soloEmphasis ? '0.01em' : undefined,
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '8px',
+  }}
+>
+  <span>{m.display_name}</span>
+  {soloEmphasis && (
+    <span style={{ color: '#C4C0B8', fontSize: '11px' }}>
+      here
+    </span>
+  )}
+</span>
                         <span style={{ fontSize: '13px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '5px' }}>
                           {presenceDotColor(m.presence_state) && (
                             <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: presenceDotColor(m.presence_state)!, flexShrink: 0 }} />
@@ -1508,232 +1525,366 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
         )}
 
 
-        {/* ── ACTIVITY CHIPS ────────────────────────────────────────────────── */}
-        {!isSearching && (
-          <section ref={whRef} className="px-5 pb-5 lg:pb-4">
-            <div className="mt-2">
-              {tapInFeedback ? (
-                <p style={{ fontSize: '14px', color: '#4A453F' }}>✓ {tapInFeedback}</p>
-              ) : (
-                <>
-                {/* ── Action chips (primary) ── */}
-                <div className="flex flex-wrap gap-1.5">
-                  {(() => {
-                    const myLabel  = latestActivityByMemberId.get(activeMemberId)?.label ?? ''
-                    const { primary: myPrimary } = parseCompositeState(myLabel)
+{/* ── ACTIVITY CHIPS ────────────────────────────────────────────────── */}
+{!isSearching && (
+  <section ref={whRef} className="px-5 pb-5 lg:pb-4">
+    <div className="mt-2">
+      {tapInFeedback ? (
+        <p style={{ fontSize: '14px', color: '#4A453F' }}>✓ {tapInFeedback}</p>
+      ) : (
+        <>
+          {/* ── Action chips (primary) ── */}
+          <div style={{ marginBottom: '10px' }}>
+            <p
+              style={{
+                fontSize: '11px',
+                color: '#B0ABA4',
+                margin: '0 0 6px 2px',
+                letterSpacing: '0.02em',
+              }}
+            >
+              What you're in
+            </p>
 
-                    return ACTION_CHIPS.map(label => {
-                      const count = members.filter(m => {
-                        const lbl = latestActivityByMemberId.get(m.id)?.label ?? ''
-                        return parseCompositeState(lbl).primary.trim().toLowerCase() === label.trim().toLowerCase()
-                      }).length
+            <div className="flex flex-wrap gap-1.5">
+              {(() => {
+                const myLabel =
+                  latestActivityByMemberId.get(activeMemberId)?.label ?? ''
+                const { primary: myPrimary } = parseCompositeState(myLabel)
 
-                      const isShared   = count >= 2
-                      const isFlashed  = flashedChip === label
-                      const isActive   = myPrimary.trim().toLowerCase() === label.trim().toLowerCase()
-                      const isSelected = selectedAction === label && canRefineSelectedAction()
-                      const emoji      = STATE_EMOJI[label] ?? ''
+                return ACTION_CHIPS.map(label => {
+                  const count = members.filter(m => {
+                    const lbl =
+                      latestActivityByMemberId.get(m.id)?.label ?? ''
+                    return (
+                      parseCompositeState(lbl)
+                        .primary.trim()
+                        .toLowerCase() === label.trim().toLowerCase()
+                    )
+                  }).length
+
+                  const isShared = count >= 2
+                  const isFlashed = flashedChip === label
+                  const isActive =
+                    myPrimary.trim().toLowerCase() ===
+                    label.trim().toLowerCase()
+                  const isSelected =
+                    selectedAction === label &&
+                    canRefineSelectedAction()
+                  const emoji = STATE_EMOJI[label] ?? ''
+
+                  return (
+                    <button
+                      key={label}
+                      className="dw-chip"
+                      onClick={() => {
+                        const rememberedEmotion =
+                          lastEmotionRef.current[label]
+                        const nextLabel = rememberedEmotion
+                          ? `${label} · ${rememberedEmotion}`
+                          : label
+
+                        tapIn(emoji, nextLabel)
+                        armSelectedAction(label)
+
+                        setFlashedChip(label)
+                        setTimeout(() => setFlashedChip(null), 300)
+                      }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: '4px 12px',
+                        borderRadius: '999px',
+                        background: isFlashed
+                          ? '#E4DFD8'
+                          : isActive || isSelected
+                          ? '#E8E4DC'
+                          : '#F4F1EC',
+                        fontSize: '13px',
+                        color: isShared ? '#1A1A18' : '#3A3630',
+                        fontWeight:
+                          isShared || isActive || isSelected ? 500 : 400,
+                        border: isSelected
+                          ? '1px solid #D6D1C8'
+                          : '1px solid transparent',
+                        boxShadow: isSelected
+                          ? '0 0 0 2px rgba(214, 209, 200, 0.18)'
+                          : 'none',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {emoji ? `${emoji} ${label}` : label}
+                      {count >= 1 && (
+                        <span
+                          style={{
+                            color: isShared ? '#6B7280' : '#9CA3AF',
+                            marginLeft: '4px',
+                            fontWeight: 400,
+                          }}
+                        >
+                          · {count}
+                        </span>
+                      )}
+                    </button>
+                  )
+                })
+              })()}
+            </div>
+          </div>
+
+          {/* ── Emotion chips (secondary) ── */}
+          {activeMemberId &&
+            (() => {
+              const myEvent =
+                latestActivityByMemberId.get(activeMemberId)
+              const myLabel = myEvent
+                ? decayedLabel(myEvent.label, myEvent.created_at)
+                : ''
+              const { emotion: myEmotion } =
+                parseCompositeState(myLabel)
+              const isSelectable = canRefineSelectedAction()
+
+              return (
+                <div style={{ marginTop: '2px' }}>
+                  <p
+                    style={{
+                      fontSize: '11px',
+                      color: '#C4C0B8',
+                      margin: '0 0 6px 2px',
+                      letterSpacing: '0.02em',
+                    }}
+                  >
+                    How it feels
+                  </p>
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {EMOTION_CHIPS.map(label => {
+                      const isActive =
+                        (myEmotion ?? '')
+                          .trim()
+                          .toLowerCase() ===
+                        label.trim().toLowerCase()
 
                       return (
                         <button
                           key={label}
                           className="dw-chip"
                           onClick={() => {
-                            const rememberedEmotion = lastEmotionRef.current[label]
-                            const nextLabel = rememberedEmotion ? `${label} · ${rememberedEmotion}` : label
-                            tapIn(emoji, nextLabel)
-                            armSelectedAction(label)
-                            setFlashedChip(label)
-                            setTimeout(() => setFlashedChip(null), 300)
+                            if (
+                              selectedAction &&
+                              canRefineSelectedAction()
+                            ) {
+                              const action = selectedAction
+                              const combined = `${action} · ${label}`
+
+                              lastEmotionRef.current[action] = label
+                              removeRecentOptimisticPlainAction(action)
+
+                              tapIn('', combined)
+                              clearSelectedAction()
+                              return
+                            }
+
+                            tapIn('', label)
+                            clearSelectedAction()
                           }}
                           style={{
-                            display:    'inline-flex',
+                            display: 'inline-flex',
                             alignItems: 'center',
-                            padding:    '4px 12px',
+                            padding: '4px 12px',
                             borderRadius: '999px',
-                            background: isFlashed
-                              ? '#E4DFD8'
-                              : isActive || isSelected
-                              ? '#E8E4DC'
-                              : '#F4F1EC',
-                            fontSize:   '13px',
-                            color:      isShared ? '#1A1A18' : '#3A3630',
-                            fontWeight: isShared || isActive || isSelected ? 500 : 400,
-                            border:     isSelected ? '1px solid #D6D1C8' : 'none',
-                            cursor:     'pointer',
+                            background: isActive
+                              ? '#F0ECE5'
+                              : '#FAF8F4',
+                            fontSize: '13px',
+                            color: isActive ? '#6B7280' : '#A29B93',
+                            fontWeight: isActive ? 500 : 400,
+                            border: '1px solid #F1ECE4',
+                            opacity: isSelectable ? 1 : 0.82,
+                            cursor: 'pointer',
                           }}
                         >
-                          {emoji ? `${emoji} ${label}` : label}
-                          {count >= 1 && (
-                            <span style={{ color: isShared ? '#6B7280' : '#9CA3AF', marginLeft: '4px', fontWeight: 400 }}>
-                              · {count}
-                            </span>
-                          )}
+                          {label}
                         </button>
                       )
-                    })
-                  })()}
+                    })}
+                  </div>
                 </div>
+              )
+            })()}
+        </>
+      )}
 
-                {/* ── Emotion chips (secondary) ── */}
-                {activeMemberId && (() => {
-                  const myEvent = latestActivityByMemberId.get(activeMemberId)
-                  const myLabel = myEvent ? decayedLabel(myEvent.label, myEvent.created_at) : ''
-                  const { emotion: myEmotion } = parseCompositeState(myLabel)
-                  const isSelectable = canRefineSelectedAction()
+      {!tapInFeedback && (
+        <form
+          style={{
+            marginTop: '8px',
+            display: 'flex',
+            gap: '6px',
+            alignItems: 'center',
+          }}
+          onSubmit={async e => {
+            e.preventDefault()
+            const text = customText.trim()
+            console.log('[custom input] submitted:', {
+              raw: customText,
+              trimmed: text,
+            })
+            if (!text) return
 
-                  return (
-                    <div className="flex flex-wrap gap-1.5" style={{ marginTop: '6px' }}>
-                      {EMOTION_CHIPS.map(emo => {
-                        const isActive = (myEmotion ?? '').trim().toLowerCase() === emo
+            const scheduled = parseScheduled(text)
+            console.log('[custom input] parseScheduled result:', scheduled)
 
-                        return (
-                          <button
-                            key={emo}
-                            className="dw-chip"
-                            onClick={() => {
-                              // CASE 1: emotion refines a recent selected action
-                              if (selectedAction && canRefineSelectedAction()) {
-                                const action   = selectedAction
-                                const combined = `${action} · ${emo}`
-                                lastEmotionRef.current[action] = emo
-                                removeRecentOptimisticPlainAction(action)
-                                tapIn('', combined)
-                                clearSelectedAction()
-                                return
-                              }
-                              // CASE 2: emotion-only
-                              tapIn('', emo)
-                              clearSelectedAction()
-                            }}
-                            style={{
-                              display:    'inline-flex',
-                              alignItems: 'center',
-                              padding:    '3px 11px',
-                              borderRadius: '999px',
-                              background: isActive ? '#EAE6E0' : '#F7F4EE',
-                              fontSize:   '12px',
-                              color:      isActive ? '#4A453F' : '#7A7470',
-                              fontStyle:  'italic',
-                              fontWeight: isActive ? 500 : 400,
-                              border:     isActive ? '1px solid #D5D0CA' : '1px solid transparent',
-                              opacity:    isSelectable ? 1 : 0.72,
-                              cursor:     'pointer',
-                            }}
-                          >
-                            {emo}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )
-                })()}
-                </>
-              )}
-              {!tapInFeedback && (
-                <form
-                  style={{ marginTop: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}
-                  onSubmit={async e => {
-                    e.preventDefault()
-                    const text = customText.trim()
-                    console.log('[custom input] submitted:', { raw: customText, trimmed: text })
-                    if (!text) return
-                    const scheduled = parseScheduled(text)
-                    console.log('[custom input] parseScheduled result:', scheduled)
-                    if (scheduled) {
-                      console.log('[custom input] entering scheduled branch')
-                      const payload = { space_id: spaceId, label: scheduled.label, starts_at: scheduled.starts_at }
-                      console.log('[custom input] upcoming insert payload:', payload)
-                      try {
-                        const { error } = await supabase.from('upcoming').insert(payload)
-                        if (error) throw error
-                        console.log('[custom input] upcoming insert success')
-                        // Realtime subscription on 'upcoming' fires fetchAll — no optimistic append needed
-                        setTapInFeedback(`${scheduled.label} · ${clockTime(scheduled.starts_at)}`)
-                        if (tapInTimer.current) clearTimeout(tapInTimer.current)
-                        tapInTimer.current = setTimeout(() => setTapInFeedback(null), 2000)
-                      } catch (err) {
-                        const error = err as any
-                        console.error('[custom input] upcoming insert failed:', {
-                          message: error?.message,
-                          details: error?.details,
-                          hint: error?.hint,
-                          code: error?.code,
-                        })
-                        console.log('[custom input] falling back to plain log entry')
-                        tapIn('', text)
-                      }
+            if (scheduled) {
+              console.log('[custom input] entering scheduled branch')
+              const payload = {
+                space_id: spaceId,
+                label: scheduled.label,
+                starts_at: scheduled.starts_at,
+              }
+              console.log('[custom input] upcoming insert payload:', payload)
 
-                      setCustomText('')
-                      return
-                    }
+              try {
+                const { error } = await supabase
+                  .from('upcoming')
+                  .insert(payload)
+                if (error) throw error
 
-                    console.log('[custom input] entering plain-log branch, calling tapIn')
-                    tapIn('', text)
-                    setCustomText('')
+                console.log('[custom input] upcoming insert success')
+                setTapInFeedback(
+                  `${scheduled.label} · ${clockTime(scheduled.starts_at)}`
+                )
+                if (tapInTimer.current) clearTimeout(tapInTimer.current)
+                tapInTimer.current = setTimeout(
+                  () => setTapInFeedback(null),
+                  2000
+                )
+              } catch (err) {
+                const error = err as any
+                console.error('[custom input] upcoming insert failed:', {
+                  message: error?.message,
+                  details: error?.details,
+                  hint: error?.hint,
+                  code: error?.code,
+                })
+                console.log(
+                  '[custom input] falling back to plain log entry'
+                )
+                tapIn('', text)
+              }
+
+              setCustomText('')
+              return
+            }
+
+            console.log(
+              '[custom input] entering plain-log branch, calling tapIn'
+            )
+            tapIn('', text)
+            setCustomText('')
+          }}
+        >
+          <input
+            ref={customInputRef}
+            value={customText}
+            onChange={e => setCustomText(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Escape') {
+                setCustomText('')
+              }
+            }}
+            placeholder="What are you in?"
+            style={{
+              flex: 1,
+              fontSize: '13px',
+              color: '#3A3630',
+              background: '#F4F1EC',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '6px 10px',
+              outline: 'none',
+            }}
+          />
+          <button
+            type="submit"
+            disabled={!customText.trim()}
+            style={{
+              fontSize: '13px',
+              color: customText.trim() ? '#1A1A18' : '#9CA3AF',
+              border: 'none',
+              background: 'transparent',
+              cursor: customText.trim() ? 'pointer' : 'default',
+              padding: '0 4px',
+            }}
+          >
+            Send
+          </button>
+        </form>
+      )}
+
+      {/* Inline typing suggestions — matches from dynamic palette + core states */}
+      {customText.trim().length >= 2 &&
+        (() => {
+          const q = customText.trim().toLowerCase()
+          const pool = [
+            ...ACTION_CHIPS,
+            'Focused',
+            'Busy',
+            'Tired',
+            'Dinner',
+            'Lunch',
+            'Commuting',
+          ]
+          const seen = new Set<string>()
+          const matches = pool
+            .filter(l => {
+              const norm = l.toLowerCase()
+              if (!norm.startsWith(q) && !norm.includes(q)) return false
+              if (seen.has(norm)) return false
+              seen.add(norm)
+              return true
+            })
+            .slice(0, 3)
+
+          if (!matches.length) return null
+
+          return (
+            <div
+              style={{
+                display: 'flex',
+                gap: '6px',
+                marginTop: '6px',
+                flexWrap: 'wrap',
+              }}
+            >
+              {matches.map(label => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => {
+                    setCustomText(label)
+                    customInputRef.current?.focus()
+                  }}
+                  style={{
+                    fontSize: '12px',
+                    color: '#6B7280',
+                    background: 'none',
+                    border: 'none',
+                    padding: '0',
+                    cursor: 'pointer',
+                    textDecoration: 'underline',
+                    textDecorationColor: '#D1CDC8',
                   }}
                 >
-                  <input
-                    ref={customInputRef}
-                    value={customText}
-                    onChange={e => setCustomText(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Escape') { setCustomText('') } }}
-                    placeholder="What are you in?"
-                    style={{
-                      flex: 1,
-                      fontSize: '13px',
-                      color: '#3A3630',
-                      background: '#F4F1EC',
-                      border: 'none',
-                      borderRadius: '8px',
-                      padding: '6px 10px',
-                      outline: 'none',
-                    }}
-                  />
-                  <button
-                    type="submit"
-                    disabled={!customText.trim()}
-                    style={{ fontSize: '13px', color: customText.trim() ? '#1A1A18' : '#9CA3AF', border: 'none', background: 'transparent', cursor: customText.trim() ? 'pointer' : 'default', padding: '0 4px' }}
-                  >
-                    Send
-                  </button>
-                </form>
-              )}
-              {/* Inline typing suggestions — matches from dynamic palette + core states */}
-              {customText.trim().length >= 2 && (() => {
-                const q = customText.trim().toLowerCase()
-                const pool = [
-                  ...ACTION_CHIPS,
-                  'Focused', 'Busy', 'Tired', 'Dinner', 'Lunch', 'Commuting',
-                ]
-                const seen = new Set<string>()
-                const matches = pool.filter(l => {
-                  const norm = l.toLowerCase()
-                  if (!norm.startsWith(q) && !norm.includes(q)) return false
-                  if (seen.has(norm)) return false
-                  seen.add(norm)
-                  return true
-                }).slice(0, 3)
-                if (!matches.length) return null
-                return (
-                  <div style={{ display: 'flex', gap: '6px', marginTop: '6px', flexWrap: 'wrap' }}>
-                    {matches.map(label => (
-                      <button
-                        key={label}
-                        type="button"
-                        onClick={() => { setCustomText(label); customInputRef.current?.focus() }}
-                        style={{ fontSize: '12px', color: '#6B7280', background: 'none', border: 'none', padding: '0', cursor: 'pointer', textDecoration: 'underline', textDecorationColor: '#D1CDC8' }}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                )
-              })()}
+                  {label}
+                </button>
+              ))}
             </div>
-          </section>
-        )}
-
+          )
+        })()}
+    </div>
+  </section>
+)}
         {/* ── UPCOMING ─────────────────────────────────────────────────────── */}
         {!isSearching && upcomingItems.length > 0 && spaceStage === 'alive' && (
           <section className="px-5 pb-5 lg:pb-4">

@@ -11,7 +11,7 @@ type Phase = 'checking' | 'landing' | 'spaces'
 type SpaceRow = {
   id: string
   name: string
-  subtitle: string | null
+  subtitle: string | undefined
 }
 
 export default function HomePage() {
@@ -46,7 +46,7 @@ export default function HomePage() {
         const rows = spacesData.map(s => ({
           id: s.id,
           name: s.name,
-          subtitle: null,
+          subtitle: undefined,
         }))
 
         setSpaces(rows)
@@ -83,7 +83,7 @@ export default function HomePage() {
         .map(space => ({
           id: space!.id,
           name: space!.name,
-          subtitle: null,
+          subtitle: undefined,
         }))
 
       setSpaces(orderedTracked)

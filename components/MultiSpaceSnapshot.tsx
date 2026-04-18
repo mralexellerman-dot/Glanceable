@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 type SnapshotSpace = {
@@ -35,6 +36,26 @@ export default function MultiSpaceSnapshot({
   onCreate,
 }: MultiSpaceSnapshotProps) {
   const router = useRouter()
+  const [hiddenIds, setHiddenIds] = useState<string[]>([])
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('dw_hidden_spaces') || '[]')
+      setHiddenIds(Array.isArray(stored) ? stored : [])
+    } catch {
+      setHiddenIds([])
+    }
+  }, [])
+
+  function hideSpace(spaceId: string) {
+    const next = [...new Set([...hiddenIds, spaceId])]
+    setHiddenIds(next)
+    try {
+      localStorage.setItem('dw_hidden_spaces', JSON.stringify(next))
+    } catch {}
+  }
+
+  const visibleSpaces = spaces.filter(space => !hiddenIds.includes(space.id))
 
   const PAGE: React.CSSProperties = {
     minHeight: '100dvh',
@@ -86,6 +107,20 @@ export default function MultiSpaceSnapshot({
     gap: '6px',
     boxShadow: '0 1px 2px rgba(28,24,20,0.03)',
     transition: 'transform 120ms ease, box-shadow 120ms ease, background 120ms ease',
+    position: 'relative',
+  }
+
+  const HIDE_BTN: React.CSSProperties = {
+    position: 'absolute',
+    top: '10px',
+    right: '10px',
+    fontSize: '12px',
+    color: '#B0ABA4',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    padding: 0,
+    lineHeight: 1,
   }
 
   const NAME: React.CSSProperties = {
@@ -95,6 +130,7 @@ export default function MultiSpaceSnapshot({
     color: '#1C1814',
     margin: 0,
     lineHeight: 1.2,
+    paddingRight: '36px',
   }
 
   const META: React.CSSProperties = {
@@ -126,6 +162,15 @@ export default function MultiSpaceSnapshot({
     fontStyle: 'italic',
   }
 
+  const EMPTY_LIST: React.CSSProperties = {
+    fontSize: '14px',
+    color: '#B7B0A8',
+    margin: 0,
+    lineHeight: 1.4,
+    fontStyle: 'italic',
+    padding: '8px 2px 0',
+  }
+
   const CREATE_BTN: React.CSSProperties = {
     marginTop: '8px',
     padding: '14px 16px',
@@ -148,38 +193,53 @@ export default function MultiSpaceSnapshot({
         </div>
 
         <div style={LIST}>
-          {spaces.map(space => {
-            const { who, state } = splitSubtitle(space.subtitle)
+          {visibleSpaces.length === 0 ? (
+            <p style={EMPTY_LIST}>No visible spaces.</p>
+          ) : (
+            visibleSpaces.map(space => {
+              const { who, state } = splitSubtitle(space.subtitle)
 
-            return (
-              <button
-                key={space.id}
-                onClick={() => router.push(`/space/${space.id}`)}
-                style={CARD}
-                onMouseEnter={e => {
-                  e.currentTarget.style.background = '#F7F3ED'
-                  e.currentTarget.style.boxShadow = '0 4px 14px rgba(28,24,20,0.05)'
-                  e.currentTarget.style.transform = 'translateY(-1px)'
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.background = '#F4F1EC'
-                  e.currentTarget.style.boxShadow = '0 1px 2px rgba(28,24,20,0.03)'
-                  e.currentTarget.style.transform = 'translateY(0)'
-                }}
-              >
-                <p style={NAME}>{space.name}</p>
+              return (
+                <div
+                  key={space.id}
+                  onClick={() => router.push(`/space/${space.id}`)}
+                  style={CARD}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = '#F7F3ED'
+                    e.currentTarget.style.boxShadow = '0 4px 14px rgba(28,24,20,0.05)'
+                    e.currentTarget.style.transform = 'translateY(-1px)'
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = '#F4F1EC'
+                    e.currentTarget.style.boxShadow = '0 1px 2px rgba(28,24,20,0.03)'
+                    e.currentTarget.style.transform = 'translateY(0)'
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation()
+                      hideSpace(space.id)
+                    }}
+                    style={HIDE_BTN}
+                  >
+                    hide
+                  </button>
 
-                <div style={META}>
-                  {who ? <p style={WHO}>{who}</p> : null}
-                  {state ? (
-                    <p style={STATE}>{state}</p>
-                  ) : (
-                    <p style={EMPTY}>Open space</p>
-                  )}
+                  <p style={NAME}>{space.name}</p>
+
+                  <div style={META}>
+                    {who ? <p style={WHO}>{who}</p> : null}
+                    {state ? (
+                      <p style={STATE}>{state}</p>
+                    ) : (
+                      <p style={EMPTY}>Tap to begin</p>
+                    )}
+                  </div>
                 </div>
-              </button>
-            )
-          })}
+              )
+            })
+          )}
         </div>
 
         <button
