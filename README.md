@@ -1,4 +1,14 @@
-# Glanceable
+
+
+```bash
+git clone https://github.com/[your-username]/glanceable
+cd glanceable
+npm install
+cp .env.example .env.local
+npm run dev
+## Contributing
+
+See [CONTRI# Glanceable
 
 > Know when it's a good time to connect — without asking.
 
@@ -86,11 +96,20 @@ If it adds noise, it doesn’t belong.
 ## Running locally
 
 ```bash
-git clone https://github.com/[your-username]/glanceable
-cd glanceable
+git clone https://github.com/mralexellerman-dot/Glanceable
+cd Glanceable
 npm install
 cp .env.example .env.local
 npm run dev
+```
+
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md)
+
+## Status
+
+Early MVP.  
+Actively being built.
+
+Expect rough edges.
