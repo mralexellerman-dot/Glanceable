@@ -1440,7 +1440,39 @@ useEffect(() => {
             </section>
           )
         })()}
+{/* ── TODAY ───────────────────────────────────────────────────────── */}
+{!isSearching && todayEvents.length > 0 && (
+  <section className="px-5 pb-5 lg:pb-4">
+    <Label>Today</Label>
 
+    <div className="mt-2">
+      {todayEvents.map(({ event, count }, i) => (
+        <EventRow
+          key={event.id}
+          event={event}
+          count={count}
+          activeMemberId={activeMemberId}
+          onDelete={deleteEvent}
+          isFirst={i === 0}
+          tick={tick}
+          nowMs={nowMs}
+          isNew={isNew(event.created_at)}
+          onTap={() => {
+            const primary = parseCompositeState(event.label).primary
+            tapIn(event.emoji || '', primary)
+
+            if (!hasJoinedState) {
+              setHasJoinedState(true)
+              try {
+                localStorage.setItem('glanceable_joined_once', '1')
+              } catch {}
+            }
+          }}
+        />
+      ))}
+    </div>
+  </section>
+)}
         {/* ── CALL HINT ─────────────────────────────────────────────────────── */}
         <div className="px-5" style={{
           height: showCallHint ? '24px' : '0',
@@ -1919,7 +1951,21 @@ useEffect(() => {
             {searchResults.length > 0 ? (
               <div className="mt-2">
                 {searchResults.map(e => (
-                  <EventRow key={e.id} event={e} activeMemberId={activeMemberId} onDelete={deleteEvent} tick={tick} />
+  <EventRow
+  key={e.id}
+  event={e}
+  count={count}
+  activeMemberId={activeMemberId}
+  onDelete={deleteEvent}
+  isFirst={i === 0}
+  tick={tick}
+  nowMs={nowMs}
+  isNew={isNew(e.created_at)}
+  onTap={() => {
+    const primary = parseCompositeState(e.label).primary
+    tapIn(e.emoji || '', primary)
+  }}
+/>
                 ))}
               </div>
             ) : (
@@ -1928,42 +1974,7 @@ useEffect(() => {
           </section>
         )}
 
-        {/* ── TODAY ─────────────────────────────────────────────────────────── */}
-        {!isSearching && todayEvents.length > 0 && (
-          <section className="px-5 py-4 lg:py-3">
-            <Label>Today</Label>
-            {todayEvents.map(({ event: e, count }, i) => (
-              <EventRow key={e.id} event={e} count={count} activeMemberId={activeMemberId} onDelete={deleteEvent} isFirst={i === 0} tick={tick} nowMs={nowMs} isNew={isNew(e.created_at)} />
-            ))}
-          </section>
-        )}
-
-        {/* ── 6. EARLIER ────────────────────────────────────────────────────── */}
-        {!isSearching && earlierEvents.length > 0 && (
-          <>
-            <Rule color={dividerColor} />
-            <section className="px-5 py-4 lg:py-3">
-              <Label>Earlier</Label>
-              <div className="mt-2">
-                {earlierGroups.map((group, gi) => (
-                  <div key={group.label}>
-                    {earlierGroups.length > 1 && (
-                      <p
-                        className="text-xs"
-                        style={{ color: '#C4C0B8', marginTop: gi === 0 ? '0' : '12px', marginBottom: '2px' }}
-                      >
-                        {group.label}
-                      </p>
-                    )}
-                    {group.events.map(e => (
-                      <EventRow key={e.id} event={e} activeMemberId={activeMemberId} onDelete={deleteEvent} tick={tick} nowMs={nowMs} />
-                    ))}
-                  </div>
-                ))}
-              </div>
-            </section>
-          </>
-        )}
+  
 
         {/* ── INVITE PROMPT (initializing state only) ──────────────────────── */}
         {!isSearching && spaceStage === 'initializing' && (
@@ -2202,14 +2213,34 @@ interface EventRowProps {
   event: Event
   count?: number
   activeMemberId: string
-  onDelete: (id: string) => void
+  onDelete?: (id: string) => void
   isFirst?: boolean
   tick?: number
   nowMs?: number
   isNew?: boolean
+  onTap?: () => void
 }
-
-function EventRow({ event, count, activeMemberId, onDelete, isFirst, tick, nowMs, isNew }: EventRowProps) {
+function EventRow({
+  event,
+  count,
+  activeMemberId,
+  onDelete,
+  isFirst,
+  tick,
+  nowMs,
+  isNew,
+  onTap,
+}: {
+  event: Event
+  count?: number
+  activeMemberId: string
+  onDelete?: (id: string) => void
+  isFirst?: boolean
+  tick?: number
+  nowMs: number
+  isNew?: boolean
+  onTap?: () => void
+}) {
   const now = nowMs ?? 0
   const canDelete = !!activeMemberId
     && event.member_id === activeMemberId
@@ -2217,7 +2248,15 @@ function EventRow({ event, count, activeMemberId, onDelete, isFirst, tick, nowMs
     && now - new Date(event.created_at).getTime() < 10 * 60_000
 
   return (
-    <div className="flex items-baseline justify-between" style={{ paddingTop: '5px', paddingBottom: '5px' }}>
+  <div
+  className="flex items-baseline justify-between"
+  onClick={onTap}
+  style={{
+    paddingTop: '5px',
+    paddingBottom: '5px',
+    cursor: onTap ? 'pointer' : 'default',
+  }}
+>
       <div className="flex items-baseline gap-2 min-w-0 flex-1">
         {event.emoji && (
           <span style={{ fontSize: '15px', lineHeight: 1, flexShrink: 0 }}>{event.emoji}</span>
