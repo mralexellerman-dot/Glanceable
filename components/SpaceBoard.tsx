@@ -560,7 +560,6 @@ export default function SpaceBoard({ spaceId, memberId }: SpaceBoardProps) {
     if (spaceRes.data)   setSpace(spaceRes.data)
     if (membersRes.data) {
       setMembers(membersRes.data)
-      console.log('[fetchAll] member_id:', memberId, '| members fetched:', membersRes.data.length, '| ids:', membersRes.data.map((m: Member) => m.id))
     }
     if (eventsRes.data)  setServerEvents(eventsRes.data as Event[])
     if (upcomingRes.data) setUpcoming(upcomingRes.data)
@@ -766,7 +765,7 @@ useEffect(() => {
   }
 
   function tapIn(emoji: string, label: string) {
-    console.log('[tapIn] called with:', { emoji, label })
+
     logEvent(emoji, label)
     recentTaps.current.set(label, Date.now())
     // Solo-space moment invite: show "Let them see this" occasionally
@@ -843,7 +842,6 @@ useEffect(() => {
   async function logEvent(emoji: string, label: string, note?: string) {
     const bulk = parseBulk(label)
     const mid  = activeMemberId || null
-    console.log('[logEvent] member_id used for insert:', mid)
     if (!mid) {
       console.error('[logEvent] blocked: no member_id — cannot insert event')
       return
@@ -902,7 +900,6 @@ useEffect(() => {
   }
 
   function handleJoinState(label: string) {
-    console.log('[handleJoinState] tapped label:', label, '| activeMemberId:', activeMemberId)
     if (!activeMemberId) {
       console.warn('[handleJoinState] no activeMemberId — skipping')
       return
@@ -1316,7 +1313,7 @@ useEffect(() => {
         {/* ── CURRENT ──────────────────────────────────────────────────────── */}
         {(() => {
           const visibleMembers = sortedMembers
-          console.log('[CURRENT] member_id:', activeMemberId, '| members fetched:', members.length, '| member_ids in CURRENT:', visibleMembers.map(m => m.id))
+  
           const isSolo = members.length <= 1
           if (visibleMembers.length === 0) return null
           return (
@@ -1398,7 +1395,7 @@ useEffect(() => {
                       {recentActivity && (
                         <p
                           onClick={canJoinActivity ? () => {
-                            console.log('[tap-to-join] activity label:', recentActivity.label, '| activeMemberId:', activeMemberId)
+  
                             tapIn(recentActivity.emoji || '', decayedLabel(recentActivity.label, recentActivity.created_at))
                             if (!hasJoinedState) { setHasJoinedState(true); try { localStorage.setItem('glanceable_joined_once', '1') } catch {} }
                             setJoinedFeedback(m.id)
@@ -1755,66 +1752,57 @@ useEffect(() => {
             gap: '6px',
             alignItems: 'center',
           }}
-          onSubmit={async e => {
-            e.preventDefault()
-            const text = customText.trim()
-            console.log('[custom input] submitted:', {
-              raw: customText,
-              trimmed: text,
-            })
-            if (!text) return
+ onSubmit={async e => {
+  e.preventDefault()
+  const text = customText.trim()
+  if (!text) return
 
-            const scheduled = parseScheduled(text)
-            console.log('[custom input] parseScheduled result:', scheduled)
+  const scheduled = parseScheduled(text)
 
-            if (scheduled) {
-              console.log('[custom input] entering scheduled branch')
-              const payload = {
-                space_id: spaceId,
-                label: scheduled.label,
-                starts_at: scheduled.starts_at,
-              }
-              console.log('[custom input] upcoming insert payload:', payload)
+  if (scheduled) {
+    const payload = {
+      space_id: spaceId,
+      label: scheduled.label,
+      starts_at: scheduled.starts_at,
+    }
 
-              try {
-                const { error } = await supabase
-                  .from('upcoming')
-                  .insert(payload)
-                if (error) throw error
+    try {
+      const { error } = await supabase
+        .from('upcoming')
+        .insert(payload)
+      if (error) throw error
 
-                console.log('[custom input] upcoming insert success')
-                setTapInFeedback(
-                  `${scheduled.label} · ${clockTime(scheduled.starts_at)}`
-                )
-                if (tapInTimer.current) clearTimeout(tapInTimer.current)
-                tapInTimer.current = setTimeout(
-                  () => setTapInFeedback(null),
-                  2000
-                )
-              } catch (err) {
-                const error = err as any
-                console.error('[custom input] upcoming insert failed:', {
-                  message: error?.message,
-                  details: error?.details,
-                  hint: error?.hint,
-                  code: error?.code,
-                })
-                console.log(
-                  '[custom input] falling back to plain log entry'
-                )
-                tapIn('', text)
-              }
+      setTapInFeedback(
+        `${scheduled.label} · ${clockTime(scheduled.starts_at)}`
+      )
+      if (tapInTimer.current) clearTimeout(tapInTimer.current)
+      tapInTimer.current = setTimeout(
+        () => setTapInFeedback(null),
+        2000
+      )
 
-              setCustomText('')
-              return
-            }
+      clearSelectedAction()
+    } catch (err) {
+      const error = err as any
+      console.error('[custom input] upcoming insert failed:', {
+        message: error?.message,
+        details: error?.details,
+        hint: error?.hint,
+        code: error?.code,
+      })
 
-            console.log(
-              '[custom input] entering plain-log branch, calling tapIn'
-            )
-            tapIn('', text)
-            setCustomText('')
-          }}
+      tapIn('', text)
+      armSelectedAction(text)
+    }
+
+    setCustomText('')
+    return
+  }
+
+  tapIn('', text)
+  armSelectedAction(text)
+  setCustomText('')
+}}
         >
           <input
             ref={customInputRef}
