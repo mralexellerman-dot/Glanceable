@@ -1,71 +1,96 @@
 # Glanceable
-Glanceable — ambient presence for shared spaces
-glanceable.app
-![Glanceable](./public/og.png)
+
 > Know when it's a good time to connect — without asking.
 
-Glanceable is a presence layer for small groups who share space.
+![Glanceable](./public/og.png)
 
-Tap what you're in. The people in your space see it.  
-No texts. No notifications. No asking.  
-Just a quiet signal that says — now is a good time.
-
-**[glanceable.app](https://glanceable.app)**
+**https://glanceable.app**
 
 ---
 
 ## What it is
 
-A lightweight coordination tool built on one idea:
+Glanceable is a presence layer for people who share space.
 
-The smallest possible signal that lets people decide whether to connect.
+You tap what you're in.
+The people around you see it.
 
-You tap your state. They see it. That's it.
+No texts. No notifications. No asking.
+Just a quiet signal that says — now is a good time.
 
-Works for:
-- couples
-- families
-- small groups
+---
 
-A personal index builds passively over time —  
-not from journaling, but from lived moments.
+## Why it exists
+
+Most tools interrupt.
+
+Glanceable doesn’t.
+
+It makes presence visible without demanding attention.
+
+---
+
+## How it works
+
+* Tap your current state (working, coffee, relaxing, out)
+* Optionally add how it feels (calm, focused, tired)
+* Others see a live, glanceable signal
+* Shared moments accumulate into a lightweight history
+
+That’s it.
+
+---
+
+## What it’s for
+
+* couples
+* families
+* small groups
+
+Anywhere people coordinate without wanting friction.
 
 ---
 
 ## What it is not
 
-- Not a messaging app  
-- Not a mood tracker  
-- Not a social feed  
-- Not a notification system  
-- Not surveillance  
-- Not ad-supported  
+* not messaging
+* not a social feed
+* not a mood tracker
+* not notifications
+* not surveillance
+* not ad-supported
 
 ---
 
-## Why this exists
+## Philosophy
 
-Most tools interrupt.
+Glanceable is intentionally minimal.
 
-This one doesn’t.
+* no gamification
+* no engagement loops
+* no optimization for attention
 
-Glanceable makes presence visible without asking anything from you beyond a tap.
+If it adds noise, it doesn’t belong.
 
 ---
 
 ## Tech stack
 
-- Frontend: Next.js, React, Tailwind  
-- Backend: Node.js  
-- Database: Postgres  
-- Hosting: Vercel  
+* Next.js / React / Tailwind
+* Node.js
+* Postgres (Supabase)
+* Vercel
 
 ---
 
 ## Running locally
 
-git clone https://github.com/mralexellerman-dot/Glanceable
-cd Glanceable
+```bash
+git clone https://github.com/[your-username]/glanceable
+cd glanceable
 npm install
 cp .env.example .env.local
 npm run dev
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md)
