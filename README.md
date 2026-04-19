@@ -64,12 +64,8 @@ Glanceable makes presence visible without asking anything from you beyond a tap.
 
 ## Running locally
 
-```bash
-git clone https://github.com/[your-username]/glanceable
-cd glanceable
+git clone https://github.com/mralexellerman-dot/Glanceable
+cd Glanceable
 npm install
 cp .env.example .env.local
 npm run dev
-## Contributing
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md)
