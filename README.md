@@ -1,5 +1,7 @@
 # Glanceable
-
+Glanceable — ambient presence for shared spaces
+glanceable.app
+![Glanceable](./public/og.png)
 > Know when it's a good time to connect — without asking.
 
 Glanceable is a presence layer for small groups who share space.

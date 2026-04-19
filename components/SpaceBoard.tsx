@@ -1944,35 +1944,37 @@ useEffect(() => {
           <PersonalIndex spaceId={spaceId} activeMemberId={activeMemberId} />
         )}
 
-        {/* ── Search Results (replaces Today/Earlier when active) ────────────── */}
-        {isSearching && (
-          <section className="px-5 py-3">
-            <Label>Results</Label>
-            {searchResults.length > 0 ? (
-              <div className="mt-2">
-                {searchResults.map(e => (
-  <EventRow
-  key={e.id}
-  event={e}
-  count={count}
-  activeMemberId={activeMemberId}
-  onDelete={deleteEvent}
-  isFirst={i === 0}
-  tick={tick}
-  nowMs={nowMs}
-  isNew={isNew(e.created_at)}
-  onTap={() => {
-    const primary = parseCompositeState(e.label).primary
-    tapIn(e.emoji || '', primary)
-  }}
-/>
-                ))}
-              </div>
-            ) : (
-              <p className="mt-2 text-sm" style={{ color: '#C4C0B8' }}>No results.</p>
-            )}
-          </section>
-        )}
+{/* ── Search Results (replaces Today/Earlier when active) ────────────── */}
+{isSearching && (
+  <section className="px-5 py-3">
+    <Label>Results</Label>
+    {searchResults.length > 0 ? (
+      <div className="mt-2">
+        {searchResults.map((e, i) => (
+          <EventRow
+            key={e.id}
+            event={e}
+            count={1}
+            activeMemberId={activeMemberId}
+            onDelete={deleteEvent}
+            isFirst={i === 0}
+            tick={tick}
+            nowMs={nowMs}
+            isNew={isNew(e.created_at)}
+            onTap={() => {
+              const primary = parseCompositeState(e.label).primary
+              tapIn(e.emoji || '', primary)
+            }}
+          />
+        ))}
+      </div>
+    ) : (
+      <p className="mt-2 text-sm" style={{ color: '#C4C0B8' }}>
+        No results.
+      </p>
+    )}
+  </section>
+)}
 
   
 
@@ -2281,8 +2283,8 @@ function EventRow({
         </span>
         {canDelete && (
           <button
-            onClick={() => onDelete(event.id)}
-            style={{ color: '#D0CCCA', fontSize: '14px', lineHeight: 1, border: 'none', background: 'none', cursor: 'pointer' }}
+onClick={() => onDelete?.(event.id)}
+          style={{ color: '#D0CCCA', fontSize: '14px', lineHeight: 1, border: 'none', background: 'none', cursor: 'pointer' }}
             title="Delete"
           >
             ×

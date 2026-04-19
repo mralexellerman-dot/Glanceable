@@ -5,8 +5,13 @@ import VersionCheck from '@/components/VersionCheck'
 
 export const metadata: Metadata = {
   title: 'Glanceable',
-  description: 'A calm status board for shared spaces.',
+  description: 'Know what’s happening without asking.',
   manifest: '/manifest.json',
+  openGraph: {
+    title: 'Glanceable',
+    description: 'Know what’s happening without asking.',
+    images: ['/og.png'],
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
@@ -26,7 +31,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-  <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <body>
         {children}
         <InstallPrompt />
