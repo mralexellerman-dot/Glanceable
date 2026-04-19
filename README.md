@@ -68,3 +68,6 @@ cd glanceable
 npm install
 cp .env.example .env.local
 npm run dev
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md)
