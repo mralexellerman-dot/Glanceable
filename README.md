@@ -1,14 +1,4 @@
-
-
-```bash
-git clone https://github.com/[your-username]/glanceable
-cd glanceable
-npm install
-cp .env.example .env.local
-npm run dev
-## Contributing
-
-See [CONTRI# Glanceable
+# Glanceable
 
 > Know when it's a good time to connect — without asking.
 
@@ -24,8 +14,8 @@ Glanceable is a presence layer for people who share space.
 
 You tap what you're in.
 The people around you see it.
-
 No texts. No notifications. No asking.
+
 Just a quiet signal that says — now is a good time.
 
 ---
@@ -33,8 +23,7 @@ Just a quiet signal that says — now is a good time.
 ## Why it exists
 
 Most tools interrupt.
-
-Glanceable doesn’t.
+Glanceable doesn't.
 
 It makes presence visible without demanding attention.
 
@@ -42,20 +31,20 @@ It makes presence visible without demanding attention.
 
 ## How it works
 
-* Tap your current state (working, coffee, relaxing, out)
-* Optionally add how it feels (calm, focused, tired)
-* Others see a live, glanceable signal
-* Shared moments accumulate into a lightweight history
+- Tap your current state (working, coffee, relaxing, out)
+- Optionally add how it feels (calm, focused, tired)
+- Others see a live, glanceable signal
+- Shared moments accumulate into a lightweight history
 
-That’s it.
+That's it.
 
 ---
 
-## What it’s for
+## What it's for
 
-* couples
-* families
-* small groups
+- Couples
+- Families
+- Small groups
 
 Anywhere people coordinate without wanting friction.
 
@@ -63,12 +52,12 @@ Anywhere people coordinate without wanting friction.
 
 ## What it is not
 
-* not messaging
-* not a social feed
-* not a mood tracker
-* not notifications
-* not surveillance
-* not ad-supported
+- Not messaging
+- Not a social feed
+- Not a mood tracker
+- Not notifications
+- Not surveillance
+- Not ad-supported
 
 ---
 
@@ -76,20 +65,20 @@ Anywhere people coordinate without wanting friction.
 
 Glanceable is intentionally minimal.
 
-* no gamification
-* no engagement loops
-* no optimization for attention
+- No gamification
+- No engagement loops
+- No optimization for attention
 
-If it adds noise, it doesn’t belong.
+If it adds noise, it doesn't belong.
 
 ---
 
 ## Tech stack
 
-* Next.js / React / Tailwind
-* Node.js
-* Postgres (Supabase)
-* Vercel
+- Next.js / React / Tailwind
+- Node.js
+- Postgres (Supabase)
+- Vercel
 
 ---
 
@@ -103,13 +92,28 @@ cp .env.example .env.local
 npm run dev
 ```
 
+Open http://localhost:3000
+
+---
+
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md)
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR.
 
-## Status
+Bug fixes and performance improvements are always welcome.
+New features need a conversation first — open an issue describing
+the problem, not the solution.
 
-Early MVP.  
-Actively being built.
+---
 
-Expect rough edges.
+## License
+
+AGPL v3 — free to use, free to self-host, open source.
+
+For commercial use without open sourcing your modifications:
+**alex@glanceable.app**
+
+---
+
+*Glanceable is a presence primitive. Infrastructure for human
+connection, not a product competing for your attention.*
