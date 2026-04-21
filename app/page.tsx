@@ -110,7 +110,7 @@ export default function HomePage() {
       <div className="w-full max-w-2xl px-6 py-14">
         <div className="mb-12 text-left text-[18px] leading-8 text-neutral-900">
           <p>Sometimes you want to call.</p>
-          <p>You just do not know if now is a good time.</p>
+          <p>You just don't know if now is a good time.</p>
 
           <p className="mt-6">
             Maybe you are across town.
@@ -135,7 +135,7 @@ export default function HomePage() {
           <p className="mt-6 font-medium">Dinner · calm</p>
 
           <p className="mt-6">
-            Now you know.
+            And you know.
             <br />
             Now is a good time.
           </p>
@@ -145,7 +145,7 @@ export default function HomePage() {
           <h1 className="text-4xl font-bold tracking-tight mb-4">Glanceable</h1>
 
           <p className="text-gray-700 text-lg leading-8 mb-6">
-            Know when it’s a good time to connect — without asking.
+            Know when it’s time to connect — without asking.
           </p>
 
           <p className="text-gray-600 leading-7 mb-8 max-w-xl">
