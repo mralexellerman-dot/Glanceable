@@ -6,7 +6,6 @@ import { supabase } from '@/lib/supabase'
 import { getBrowserId } from '@/lib/memberships'
 
 type Step = 'start' | 'name' | 'welcome'
-
 type InviteState = 'idle' | 'copied'
 
 export default function CreateSpace() {
@@ -19,11 +18,45 @@ export default function CreateSpace() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [newSpaceId, setNewSpaceId] = useState<string | null>(null)
-  const [inviteCode, setInviteCode] = useState<string>('')
+  const [inviteCode, setInviteCode] = useState('')
   const [inviteState, setInviteState] = useState<InviteState>('idle')
+
+  function getInviteUrl() {
+    if (!inviteCode || typeof window === 'undefined') return ''
+    return `${window.location.origin}/join/${inviteCode}`
+  }
+
+  async function handleCopyInvite() {
+    const url = getInviteUrl()
+    if (!url) return
+
+    try {
+      await navigator.clipboard.writeText(url)
+      setInviteState('copied')
+      setTimeout(() => setInviteState('idle'), 1800)
+    } catch {}
+  }
+
+  async function handleShareInvite() {
+    const url = getInviteUrl()
+    if (!url) return
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'Join my space on Glanceable',
+          text: 'Join my space on Glanceable.',
+          url,
+        })
+      } catch {}
+    } else {
+      handleCopyInvite()
+    }
+  }
 
   async function handleCreate() {
     if (!spaceName.trim() || !memberName.trim()) return
+
     setLoading(true)
     setError('')
 
@@ -67,20 +100,6 @@ export default function CreateSpace() {
     router.push(`/join/${code}`)
   }
 
-  async function handleCopyInvite() {
-    if (!inviteCode) return
-
-    const url = `${window.location.origin}/join/${inviteCode}`
-
-    try {
-      await navigator.clipboard.writeText(url)
-      setInviteState('copied')
-      setTimeout(() => setInviteState('idle'), 1800)
-    } catch {
-      setInviteState('idle')
-    }
-  }
-
   return (
     <main
       className="min-h-screen flex flex-col items-center justify-center px-6"
@@ -90,17 +109,11 @@ export default function CreateSpace() {
         {step === 'start' && (
           <>
             <div>
-              <h1
-                className="text-xl font-semibold"
-                style={{ color: 'var(--text)' }}
-              >
+              <h1 className="text-xl font-semibold" style={{ color: 'var(--text)' }}>
                 Glanceable
               </h1>
-              <p
-                className="text-sm mt-1"
-                style={{ color: 'var(--text-secondary)' }}
-              >
-                A quiet signal for the people in your life.
+              <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
+                Co-regulate without noise.
               </p>
             </div>
 
@@ -108,26 +121,13 @@ export default function CreateSpace() {
               <button
                 onClick={() => setStep('name')}
                 className="w-full py-3.5 rounded-xl text-sm font-medium text-white"
-                style={{
-                  background: '#1A1A18',
-                  border: 'none',
-                  cursor: 'pointer',
-                }}
+                style={{ background: '#1A1A18', border: 'none', cursor: 'pointer' }}
               >
                 Create a space
               </button>
 
-              <div
-                style={{
-                  borderTop: '1px solid var(--border)',
-                  paddingTop: '16px',
-                  marginTop: '8px',
-                }}
-              >
-                <p
-                  className="text-xs mb-2"
-                  style={{ color: 'var(--text-muted)' }}
-                >
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px', marginTop: '8px' }}>
+                <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
                   Have an invite?
                 </p>
 
@@ -147,6 +147,7 @@ export default function CreateSpace() {
                       letterSpacing: '0.08em',
                     }}
                   />
+
                   <button
                     onClick={handleJoinSubmit}
                     disabled={!joinCode.trim()}
@@ -183,12 +184,12 @@ export default function CreateSpace() {
             </button>
 
             <div>
-              <h1
-                className="text-xl font-semibold"
-                style={{ color: 'var(--text)' }}
-              >
+              <h1 className="text-xl font-semibold" style={{ color: 'var(--text)' }}>
                 Name your space
               </h1>
+              <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
+                A space is shared. Glanceable works best with someone else in it.
+              </p>
             </div>
 
             <div className="space-y-3">
@@ -205,6 +206,7 @@ export default function CreateSpace() {
                 }}
                 autoFocus
               />
+
               <input
                 type="text"
                 value={memberName}
@@ -241,24 +243,15 @@ export default function CreateSpace() {
         {step === 'welcome' && newSpaceId && (
           <>
             <div>
-              <h1
-                className="text-xl font-semibold"
-                style={{ color: 'var(--text)' }}
-              >
+              <h1 className="text-xl font-semibold" style={{ color: 'var(--text)' }}>
                 Your space is ready.
               </h1>
 
-              <p
-                className="mt-4 text-base leading-loose"
-                style={{ color: 'var(--text-secondary)' }}
-              >
+              <p className="mt-4 text-base leading-loose" style={{ color: 'var(--text-secondary)' }}>
                 Glanceable works best with someone else in it.
               </p>
 
-              <p
-                className="mt-4 text-sm leading-7"
-                style={{ color: 'var(--text-secondary)' }}
-              >
+              <p className="mt-4 text-sm leading-7" style={{ color: 'var(--text-secondary)' }}>
                 Start by tapping in yourself.
                 <br />
                 When the other person joins, they can glance and see your state.
@@ -268,35 +261,49 @@ export default function CreateSpace() {
                 You can do the same for them.
               </p>
 
-              <p
-                className="mt-4 text-sm"
-                style={{ color: 'var(--text-muted)' }}
-              >
+              <p className="mt-4 text-sm" style={{ color: 'var(--text-muted)' }}>
                 That’s when it starts to feel alive.
               </p>
             </div>
 
             {inviteCode && (
               <div
-                className="rounded-2xl p-4 space-y-3"
+                className="rounded-2xl p-4 space-y-3 mt-6"
                 style={{
                   background: 'var(--surface)',
                   border: '1px solid var(--border)',
                 }}
               >
-                <p
-                  className="text-xs uppercase tracking-[0.12em]"
-                  style={{ color: 'var(--text-muted)' }}
-                >
-                  Invite someone
+                <h2 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+                  Invite one person.
+                </h2>
+
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  Someone you already think about calling.
                 </p>
 
-                <p
-                  className="text-sm break-all"
-                  style={{ color: 'var(--text-secondary)' }}
+                <div
+                  className="text-sm break-all px-3 py-2 rounded-lg"
+                  style={{
+                    background: '#F4F1EC',
+                    color: '#1A1A18',
+                  }}
                 >
-                  {`${typeof window !== 'undefined' ? window.location.origin : ''}/join/${inviteCode}`}
-                </p>
+                  {getInviteUrl()}
+                </div>
+
+                <button
+                  onClick={handleShareInvite}
+                  className="w-full py-3 rounded-xl text-sm font-medium"
+                  style={{
+                    background: '#1A1A18',
+                    color: '#FFFFFF',
+                    border: 'none',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Send to…
+                </button>
 
                 <button
                   onClick={handleCopyInvite}
@@ -310,10 +317,14 @@ export default function CreateSpace() {
                 >
                   {inviteState === 'copied' ? 'Copied' : 'Copy invite link'}
                 </button>
+
+                <p className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>
+                  They don’t need to download anything.
+                </p>
               </div>
             )}
 
-            <div className="space-y-2">
+            <div className="space-y-2 mt-6">
               <button
                 onClick={() => router.push(`/space/${newSpaceId}`)}
                 className="w-full py-3.5 rounded-xl text-sm font-medium text-white active:opacity-80"
