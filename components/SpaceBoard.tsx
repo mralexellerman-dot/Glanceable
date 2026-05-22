@@ -86,7 +86,14 @@ const STATE_EMOJI: Record<string, string> = {
 // ─── Fixed palette ────────────────────────────────────────────────────────────
 
 // Primary action chips — fixed set, renders as main row
-const ACTION_CHIPS = ['Coffee', 'Working', 'Getting ready', 'Home', 'Out', 'Relaxing']
+const ACTION_CHIPS = [
+  'Bowling practice',
+  'League night',
+  'Working on release',
+  'Spare shooting',
+  'Reviewing tape',
+  'Recovery',
+]
 
 // Emotion modifier chips — secondary row, always lowercase, optional
 const EMOTION_CHIPS = ['calm', 'focused', 'tired', 'stressed', 'quiet', 'good']
@@ -784,7 +791,7 @@ useEffect(() => {
     }
     setTapInFeedback(label)
     if (tapInTimer.current) clearTimeout(tapInTimer.current)
-    tapInTimer.current = setTimeout(() => setTapInFeedback(null), 1200)
+    tapInTimer.current = setTimeout(() => setTapInFeedback(null), 2000)
 
     // Echo moment — briefly show the tapped label near the user's own CURRENT row
     setEchoLabel(label)
